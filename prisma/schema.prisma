@@ -1,0 +1,850 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlserver"
+  url      = env("DATABASE_URL")
+}
+
+model ServiceCenter {
+  id                Int                    @id @default(autoincrement())
+  serviceCenterCode String                 @unique @map("service_center_code") @db.NVarChar(50)
+  serviceCenterName String                 @map("service_center_name") @db.NVarChar(200)
+  gstNumber         String                 @map("gst_number") @db.NVarChar(30)
+  contactPhone      String?                @map("contact_phone") @db.NVarChar(20)
+  contactEmail      String?                @map("contact_email") @db.NVarChar(150)
+  logoUrl           String?                @map("logo_url")
+  websiteUrl        String?                @map("website_url") @db.NVarChar(255)
+  tax               String                 @map("tax") @db.NVarChar(50)
+  isActive          Boolean                @default(true) @map("is_active")
+  createdById       Int?                   @map("created_by")
+  modifiedById      Int?                   @map("modified_by")
+  createdAt         DateTime               @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt         DateTime               @updatedAt @map("updated_at")
+  locations         Location[]
+  settings          ServiceCenterSetting[]
+  createdBy         User?                  @relation("ServiceCenterCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedBy        User?                  @relation("ServiceCenterModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("service_centers")
+}
+
+model State {
+  id        Int        @id @default(autoincrement())
+  stateName String     @map("state_name") @db.NVarChar(100)
+  stateCode String     @unique @map("state_code") @db.NVarChar(20)
+  slug      String     @unique @db.NVarChar(150)
+  isActive  Boolean    @default(true) @map("is_active")
+  createdAt DateTime   @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+  districts District[]
+  locations Location[]
+
+  @@map("states")
+}
+
+model District {
+  id           Int        @id @default(autoincrement())
+  stateId      Int        @map("state_id")
+  districtName String     @map("district_name") @db.NVarChar(100)
+  slug         String     @unique @db.NVarChar(180)
+  isActive     Boolean    @default(true) @map("is_active")
+  createdAt    DateTime   @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+  state        State      @relation(fields: [stateId], references: [id], onUpdate: NoAction)
+  locations    Location[]
+
+  @@unique([stateId, districtName])
+  @@map("districts")
+}
+
+model Location {
+  id                    Int                    @id @default(autoincrement())
+  serviceCenterId       Int                    @map("service_center_id")
+  stateId               Int                    @map("state_id")
+  districtId            Int                    @map("district_id")
+  locationHeadUserId    Int?                   @map("location_head_user_id")
+  locationCode          String                 @unique @map("location_code") @db.NVarChar(50)
+  locationName          String                 @map("location_name") @db.NVarChar(200)
+  slug                  String                 @unique @db.NVarChar(220)
+  locationType          String                 @map("location_type") @db.NVarChar(50)
+  address               String?
+  city                  String?                @db.NVarChar(100)
+  pincode               String?                @db.NVarChar(10)
+  latitude              Decimal?               @db.Decimal(10, 8)
+  longitude             Decimal?               @db.Decimal(11, 8)
+  contactPhone          String?                @map("contact_phone") @db.NVarChar(20)
+  contactEmail          String?                @map("contact_email") @db.NVarChar(150)
+  kioskKey              String?                @map("kiosk_key") @db.NVarChar(100)
+  isActive              Boolean                @default(true) @map("is_active")
+  createdById           Int?                   @map("created_by")
+  modifiedById          Int?                   @map("modified_by")
+  createdAt             DateTime               @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+  auditLogs             AuditLog[]
+  bays                  Bay[]
+  customers             Customer[]
+  gateEntries           GateEntry[]
+  jobCards              JobCard[]
+  createdBy             User?                  @relation("LocationCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  district              District               @relation(fields: [districtId], references: [id], onUpdate: NoAction)
+  locationHead          User?                  @relation("LocationHead", fields: [locationHeadUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedBy            User?                  @relation("LocationModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  serviceCenter         ServiceCenter          @relation(fields: [serviceCenterId], references: [id], onUpdate: NoAction)
+  state                 State                  @relation(fields: [stateId], references: [id], onUpdate: NoAction)
+  notifications         Notification[]
+  processStageTrackings ProcessStageTracking[]
+  settings              ServiceCenterSetting[]
+  stageTimeLimits       StageTimeLimit[]
+  users                 User[]
+  vehicles              Vehicle[]
+  workAssignments       WorkAssignment[]
+
+  @@map("locations")
+}
+
+model Module {
+  id                    Int                    @id @default(autoincrement())
+  moduleCode            String                 @unique @map("module_code") @db.NVarChar(100)
+  moduleName            String                 @map("module_name") @db.NVarChar(150)
+  slug                  String                 @unique @db.NVarChar(180)
+  description           String?                @db.NVarChar(500)
+  isActive              Boolean                @default(true) @map("is_active")
+  createdById           Int?                   @map("created_by")
+  modifiedById          Int?                   @map("modified_by")
+  createdAt             DateTime               @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+  createdBy             User?                  @relation("ModuleCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedBy            User?                  @relation("ModuleModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  processStageTrackings ProcessStageTracking[]
+  stageTimeLimits       StageTimeLimit[]
+  statuses              StatusMaster[]
+
+  @@map("modules")
+}
+
+model StatusMaster {
+  id                      Int                    @id @default(autoincrement())
+  moduleId                Int                    @map("module_id")
+  statusCode              String                 @map("status_code") @db.NVarChar(100)
+  statusName              String                 @map("status_name") @db.NVarChar(150)
+  slug                    String                 @db.NVarChar(180)
+  description             String?                @db.NVarChar(500)
+  sortOrder               Int                    @default(0) @map("sort_order")
+  isFinal                 Boolean                @default(false) @map("is_final")
+  isActive                Boolean                @default(true) @map("is_active")
+  createdById             Int?                   @map("created_by")
+  modifiedById            Int?                   @map("modified_by")
+  createdAt               DateTime               @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt               DateTime               @updatedAt @map("updated_at")
+  bays                    Bay[]
+  gateEntries             GateEntry[]
+  jobCardApprovals        JobCardApproval[]
+  jobCardServiceApprovals JobCardService[]       @relation("JobCardServiceApprovalStatus")
+  jobCardServiceStatuses  JobCardService[]       @relation("JobCardServiceStatus")
+  statusLogs              JobCardStatusLog[]
+  jobCardsApprovalStatus  JobCard[]              @relation("JobCardApprovalStatus")
+  jobCardsCurrentStatus   JobCard[]              @relation("JobCardCurrentStatus")
+  processStageTrackings   ProcessStageTracking[]
+  stageTimeLimits         StageTimeLimit[]
+  createdBy               User?                  @relation("StatusMasterCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedBy              User?                  @relation("StatusMasterModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  module                  Module                 @relation(fields: [moduleId], references: [id], onUpdate: NoAction)
+  workAssignments         WorkAssignment[]
+  historyActionTypes      JobCardServiceHistory[] @relation("HistoryActionType")
+  historyFromStatuses     JobCardServiceHistory[] @relation("HistoryFromStatus")
+  historyToStatuses       JobCardServiceHistory[] @relation("HistoryToStatus")
+
+  @@unique([moduleId, statusCode])
+  @@unique([moduleId, slug])
+  @@map("status_master")
+}
+
+model Role {
+  id                       Int                       @id @default(autoincrement())
+  name                     String                    @db.NVarChar(100)
+  slug                     String                    @unique @db.NVarChar(120)
+  description              String?                   @db.NVarChar(500)
+  isActive                 Boolean                   @default(true) @map("is_active")
+  createdById              Int?                      @map("created_by")
+  modifiedById             Int?                      @map("modified_by")
+  createdAt                DateTime                  @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt                DateTime                  @updatedAt @map("updated_at")
+  rolePermissions          RoleMenuPermission[]
+  createdBy                User?                     @relation("RoleCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedBy               User?                     @relation("RoleModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  stageTimeLimitRecipients StageTimeLimitRecipient[]
+  users                    User[]
+
+  @@map("roles")
+}
+
+model Menu {
+  id              Int                  @id @default(autoincrement())
+  module          String               @db.NVarChar(50)
+  parentId        Int?                 @map("parent_id")
+  name            String               @db.NVarChar(100)
+  path            String               @db.NVarChar(255)
+  icon            String?              @db.NVarChar(50)
+  sequence        Int                  @default(0)
+  isActive        Boolean              @default(true) @map("is_active")
+  createdAt       DateTime             @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
+  parent          Menu?                @relation("MenuHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children        Menu[]               @relation("MenuHierarchy")
+  rolePermissions RoleMenuPermission[]
+
+  @@unique([module, path])
+  @@map("menus")
+}
+
+model RoleMenuPermission {
+  id        Int      @id @default(autoincrement())
+  roleId    Int      @map("role_id")
+  menuId    Int      @map("menu_id")
+  canRead   Boolean  @default(false) @map("can_read")
+  canCreate Boolean  @default(false) @map("can_create")
+  canUpdate Boolean  @default(false) @map("can_update")
+  canDelete Boolean  @default(false) @map("can_delete")
+  createdAt DateTime @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  menu      Menu     @relation(fields: [menuId], references: [id])
+  role      Role     @relation(fields: [roleId], references: [id])
+
+  @@unique([roleId, menuId])
+  @@map("role_menu_permissions")
+}
+
+model Bay {
+  id                      Int          @id @default(autoincrement())
+  locationId              Int          @map("location_id")
+  bayCode                 String       @map("bay_code") @db.NVarChar(50)
+  bayName                 String       @map("bay_name") @db.NVarChar(100)
+  bayType                 String?      @map("bay_type") @db.NVarChar(50)
+  statusId                Int          @map("status_id")
+  currentWorkAssignmentId Int?         @map("current_work_assignment_id")
+  isActive                Boolean      @default(true) @map("is_active")
+  createdAt               DateTime     @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt               DateTime     @updatedAt @map("updated_at")
+  location                Location     @relation(fields: [locationId], references: [id], onUpdate: NoAction)
+  status                  StatusMaster @relation(fields: [statusId], references: [id], onUpdate: NoAction)
+
+  @@unique([locationId, bayCode])
+  @@index([locationId, statusId])
+  @@map("bays")
+}
+
+model User {
+  id                           Int                       @id @default(autoincrement())
+  fullName                     String                    @map("full_name") @db.NVarChar(150)
+  emailId                      String                    @unique @map("email_id") @db.NVarChar(150)
+  mobileNo                     String?                   @map("mobile_no") @db.NVarChar(20)
+  dob                          DateTime?                 @db.Date
+  slug                         String                    @unique @db.NVarChar(120)
+  licenceNumber                String?                   @map("licence_number") @db.NVarChar(100)
+  emergencyContact             String?                   @map("emergency_contact") @db.NVarChar(20)
+  gender                       String?                   @db.NVarChar(20)
+  address                      String?                   @db.NVarChar(500)
+  passwordHash                 String                    @map("password_hash") @db.NVarChar(255)
+  employeeCode                 String?                   @unique @map("employee_code") @db.NVarChar(50)
+  isActive                     Boolean                   @default(true) @map("is_active")
+  lastLoginAt                  DateTime?                 @map("last_login_at")
+  createdAt                    DateTime                  @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt                    DateTime                  @updatedAt @map("updated_at")
+  roleId                       Int                       @map("role_id")
+  locationId                   Int?                      @map("location_id")
+  createdById                  Int?                      @map("created_by")
+  modifiedById                 Int?                      @map("modified_by")
+  performedAuditLogs           AuditLog[]                @relation("AuditLogPerformedBy")
+  createdCustomers             Customer[]                @relation("CustomerCreatedBy")
+  modifiedCustomers            Customer[]                @relation("CustomerModifiedBy")
+  createdGateEntries           GateEntry[]               @relation("GateEntryCreatedBy")
+  enteredGateEntries           GateEntry[]               @relation("GateEntryEnteredBy")
+  modifiedGateEntries          GateEntry[]               @relation("GateEntryModifiedBy")
+  createdJobCardApprovals      JobCardApproval[]         @relation("JobCardApprovalCreatedBy")
+  modifiedJobCardApprovals     JobCardApproval[]         @relation("JobCardApprovalModifiedBy")
+  createdJobCardServices       JobCardService[]          @relation("JobCardServiceCreatedBy")
+  modifiedJobCardServices      JobCardService[]          @relation("JobCardServiceModifiedBy")
+  changedStatusLogs            JobCardStatusLog[]        @relation("JobCardStatusLogChangedBy")
+  createdJobCards              JobCard[]                 @relation("JobCardCreatedBy")
+  modifiedJobCards             JobCard[]                 @relation("JobCardModifiedBy")
+  createdLocations             Location[]                @relation("LocationCreatedBy")
+  locationHeadFor              Location[]                @relation("LocationHead")
+  modifiedLocations            Location[]                @relation("LocationModifiedBy")
+  createdMediaFiles            MediaFile[]               @relation("MediaFileCreatedBy")
+  modifiedMediaFiles           MediaFile[]               @relation("MediaFileModifiedBy")
+  uploadedMediaFiles           MediaFile[]               @relation("MediaFileUploadedBy")
+  createdModules               Module[]                  @relation("ModuleCreatedBy")
+  modifiedModules              Module[]                  @relation("ModuleModifiedBy")
+  notifications                Notification[]
+  processStageTrackingCreated  ProcessStageTracking[]    @relation("ProcessStageTrackingCreatedBy")
+  processStageTrackingModified ProcessStageTracking[]    @relation("ProcessStageTrackingModifiedBy")
+  createdRoles                 Role[]                    @relation("RoleCreatedBy")
+  modifiedRoles                Role[]                    @relation("RoleModifiedBy")
+  createdServiceCategories     ServiceCategory[]         @relation("ServiceCategoryCreatedBy")
+  modifiedServiceCategories    ServiceCategory[]         @relation("ServiceCategoryModifiedBy")
+  createdSettings              ServiceCenterSetting[]    @relation("ServiceCenterSettingCreatedBy")
+  modifiedSettings             ServiceCenterSetting[]    @relation("ServiceCenterSettingModifiedBy")
+  createdServiceCenters        ServiceCenter[]           @relation("ServiceCenterCreatedBy")
+  modifiedServiceCenters       ServiceCenter[]           @relation("ServiceCenterModifiedBy")
+  createdServiceItems          ServiceItem[]             @relation("ServiceItemCreatedBy")
+  modifiedServiceItems         ServiceItem[]             @relation("ServiceItemModifiedBy")
+  createdStageTimeLimits       StageTimeLimit[]          @relation("StageTimeLimitCreatedBy")
+  modifiedStageTimeLimits      StageTimeLimit[]          @relation("StageTimeLimitModifiedBy")
+  stageTimeLimitRecipients     StageTimeLimitRecipient[]
+  createdStatuses              StatusMaster[]            @relation("StatusMasterCreatedBy")
+  modifiedStatuses             StatusMaster[]            @relation("StatusMasterModifiedBy")
+  deviceTokens                 UserDeviceToken[]
+  createdBy                    User?                     @relation("UserCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdUsers                 User[]                    @relation("UserCreatedBy")
+  location                     Location?                 @relation(fields: [locationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedBy                   User?                     @relation("UserModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedUsers                User[]                    @relation("UserModifiedBy")
+  role                         Role                      @relation(fields: [roleId], references: [id], onUpdate: NoAction)
+  createdVehicleBrands         VehicleBrand[]            @relation("VehicleBrandCreatedBy")
+  modifiedVehicleBrands        VehicleBrand[]            @relation("VehicleBrandModifiedBy")
+  createdVehicles              Vehicle[]                 @relation("VehicleCreatedBy")
+  modifiedVehicles             Vehicle[]                 @relation("VehicleModifiedBy")
+  givenWorkAssignments         WorkAssignment[]          @relation("WorkAssignmentAssignedBy")
+  assignedWorkAssignments      WorkAssignment[]          @relation("WorkAssignmentAssignedUser")
+  createdWorkAssignments       WorkAssignment[]          @relation("WorkAssignmentCreatedBy")
+  modifiedWorkAssignments      WorkAssignment[]          @relation("WorkAssignmentModifiedBy")
+  createdJobCardServiceHistories JobCardServiceHistory[]
+
+  @@map("users")
+}
+
+model ProcessStageTracking {
+  id              Int            @id @default(autoincrement())
+  locationId      Int            @map("location_id")
+  gateEntryId     Int?           @map("gate_entry_id")
+  jobCardId       Int?           @map("job_card_id")
+  customerId      Int            @map("customer_id")
+  vehicleId       Int            @map("vehicle_id")
+  moduleId        Int            @map("module_id")
+  statusId        Int            @map("status_id")
+  stageStatus     String         @default("PENDING") @map("stage_status") @db.NVarChar(30)
+  startedAt       DateTime       @default(dbgenerated("sysutcdatetime()")) @map("started_at")
+  completedAt     DateTime?      @map("completed_at")
+  isDelayNotified Boolean        @default(false) @map("is_delay_notified")
+  delayNotifiedAt DateTime?      @map("delay_notified_at")
+  createdById     Int?           @map("created_by")
+  modifiedById    Int?           @map("modified_by")
+  createdAt       DateTime       @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  notifications   Notification[]
+  createdBy       User?          @relation("ProcessStageTrackingCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  customer        Customer       @relation(fields: [customerId], references: [id])
+  gateEntry       GateEntry?     @relation(fields: [gateEntryId], references: [id])
+  jobCard         JobCard?       @relation(fields: [jobCardId], references: [id])
+  location        Location       @relation(fields: [locationId], references: [id])
+  modifiedBy      User?          @relation("ProcessStageTrackingModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  module          Module         @relation(fields: [moduleId], references: [id])
+  status          StatusMaster   @relation(fields: [statusId], references: [id])
+  vehicle         Vehicle        @relation(fields: [vehicleId], references: [id])
+
+  @@index([locationId])
+  @@index([gateEntryId])
+  @@index([jobCardId])
+  @@index([customerId])
+  @@index([vehicleId])
+  @@index([moduleId])
+  @@index([statusId])
+  @@index([stageStatus])
+  @@index([startedAt])
+  @@map("process_stage_tracking")
+}
+
+model StageTimeLimit {
+  id             Int                       @id @default(autoincrement())
+  locationId     Int?                      @map("location_id")
+  moduleId       Int                       @map("module_id")
+  statusId       Int                       @map("status_id")
+  stageCode      String                    @map("stage_code") @db.NVarChar(50)
+  allowedMinutes Int                       @map("allowed_minutes")
+  isActive       Boolean                   @default(true) @map("is_active")
+  createdById    Int?                      @map("created_by")
+  modifiedById   Int?                      @map("modified_by")
+  createdAt      DateTime                  @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt      DateTime                  @updatedAt @map("updated_at")
+  createdBy      User?                     @relation("StageTimeLimitCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  location       Location?                 @relation(fields: [locationId], references: [id])
+  modifiedBy     User?                     @relation("StageTimeLimitModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  module         Module                    @relation(fields: [moduleId], references: [id])
+  status         StatusMaster              @relation(fields: [statusId], references: [id])
+  recipients     StageTimeLimitRecipient[]
+
+  @@unique([locationId, moduleId, statusId])
+  @@index([moduleId])
+  @@index([statusId])
+  @@index([stageCode])
+  @@map("stage_time_limits")
+}
+
+model StageTimeLimitRecipient {
+  id               Int  @id @default(autoincrement())
+  stageTimeLimitId Int  @map("stage_time_limit_id")
+  roleId           Int? @map("role_id")
+  userId           Int? @map("user_id")
+
+  stageTimeLimit StageTimeLimit @relation(fields: [stageTimeLimitId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  role           Role?          @relation(fields: [roleId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  user           User?          @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("stage_time_limit_recipients")
+}
+
+model Notification {
+  id                     Int                   @id @default(autoincrement())
+  userId                 Int                   @map("user_id")
+  title                  String                @db.NVarChar(150)
+  message                String
+  type                   String                @db.NVarChar(50)
+  locationId             Int?                  @map("location_id")
+  gateEntryId            Int?                  @map("gate_entry_id")
+  jobCardId              Int?                  @map("job_card_id")
+  processStageTrackingId Int?                  @map("process_stage_tracking_id")
+  readAt                 DateTime?             @map("read_at")
+  sentAt                 DateTime?             @map("sent_at")
+  failedAt               DateTime?             @map("failed_at")
+  failureReason          String?               @map("failure_reason")
+  retryCount             Int                   @default(0) @map("retry_count")
+  createdAt              DateTime              @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  gateEntry              GateEntry?            @relation(fields: [gateEntryId], references: [id], map: "notifications_gate_entry_id_fkey")
+  jobCard                JobCard?              @relation(fields: [jobCardId], references: [id], map: "notifications_job_card_id_fkey")
+  location               Location?             @relation(fields: [locationId], references: [id], map: "notifications_location_id_fkey")
+  processStageTracking   ProcessStageTracking? @relation(fields: [processStageTrackingId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "notifications_process_stage_tracking_id_fkey")
+  user                   User                  @relation(fields: [userId], references: [id], map: "notifications_user_id_fkey")
+
+  @@index([userId])
+  @@index([locationId])
+  @@index([gateEntryId])
+  @@index([jobCardId])
+  @@index([processStageTrackingId])
+  @@index([readAt])
+  @@index([sentAt])
+  @@index([type])
+  @@map("notifications")
+}
+
+model UserDeviceToken {
+  id         Int       @id @default(autoincrement())
+  userId     Int       @map("user_id")
+  token      String    @unique @db.NVarChar(500)
+  platform   String?   @db.NVarChar(30)
+  deviceId   String?   @map("device_id") @db.NVarChar(100)
+  isActive   Boolean   @default(true) @map("is_active")
+  lastUsedAt DateTime? @map("last_used_at")
+  createdAt  DateTime  @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  user       User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([platform])
+  @@index([deviceId])
+  @@index([isActive])
+  @@map("user_device_tokens")
+}
+
+model Customer {
+  id                    Int                    @id @default(autoincrement())
+  locationId            Int?                   @map("location_id")
+  customerCode          String?                @unique @map("customer_code") @db.NVarChar(30)
+  slug                  String                 @unique @db.NVarChar(180)
+  fullName              String                 @map("full_name") @db.NVarChar(150)
+  mobileNo              String                 @map("mobile_no") @db.NVarChar(20)
+  alternateMobileNo     String?                @map("alternate_mobile_no") @db.NVarChar(20)
+  emailId               String?                @map("email_id") @db.NVarChar(150)
+  address               String?                @db.NVarChar(500)
+  isActive              Boolean                @default(true) @map("is_active")
+  createdById           Int?                   @map("created_by")
+  modifiedById          Int?                   @map("modified_by")
+  createdAt             DateTime               @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+  createdBy             User?                  @relation("CustomerCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  location              Location?              @relation(fields: [locationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedBy            User?                  @relation("CustomerModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  gateEntries           GateEntry[]
+  jobCards              JobCard[]
+  processStageTrackings ProcessStageTracking[]
+  vehicles              Vehicle[]
+
+  @@map("customers")
+}
+
+model Vehicle {
+  id                    Int                    @id @default(autoincrement())
+  locationId            Int?                   @map("location_id")
+  customerId            Int                    @map("customer_id")
+  brandId               Int?                   @map("brand_id")
+  slug                  String                 @unique @db.NVarChar(250)
+  registrationNo        String                 @unique @map("registration_no") @db.NVarChar(30)
+  model                 String?                @db.NVarChar(100)
+  variant               String?                @db.NVarChar(100)
+  fuelType              String?                @map("fuel_type") @db.NVarChar(30)
+  vehicleColor          String?                @map("vehicle_color") @db.NVarChar(50)
+  chassisNo             String?                @map("chassis_no") @db.NVarChar(100)
+  engineNo              String?                @map("engine_no") @db.NVarChar(100)
+  isActive              Boolean                @default(true) @map("is_active")
+  createdById           Int?                   @map("created_by")
+  modifiedById          Int?                   @map("modified_by")
+  createdAt             DateTime               @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+  gateEntries           GateEntry[]
+  jobCards              JobCard[]
+  processStageTrackings ProcessStageTracking[]
+  brand                 VehicleBrand?          @relation(fields: [brandId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdBy             User?                  @relation("VehicleCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  customer              Customer               @relation(fields: [customerId], references: [id], onUpdate: NoAction)
+  location              Location?              @relation(fields: [locationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedBy            User?                  @relation("VehicleModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("vehicles")
+}
+
+model VehicleBrand {
+  id           Int       @id @default(autoincrement())
+  name         String    @db.NVarChar(100)
+  slug         String    @unique @db.NVarChar(120)
+  isActive     Boolean   @default(true) @map("is_active")
+  createdById  Int?      @map("created_by")
+  modifiedById Int?      @map("modified_by")
+  createdAt    DateTime  @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  createdBy    User?     @relation("VehicleBrandCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedBy   User?     @relation("VehicleBrandModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vehicles     Vehicle[]
+
+  @@map("vehicle_brands")
+}
+
+model GateEntry {
+  id                    Int                    @id @default(autoincrement())
+  locationId            Int                    @map("location_id")
+  statusId              Int?                   @map("status_id")
+  entryType             String                 @default("SERVICE") @map("entry_type") @db.NVarChar(30)
+  gateEntryNo           String                 @unique @map("gate_entry_no") @db.NVarChar(30)
+  slug                  String                 @unique @db.NVarChar(180)
+  customerId            Int                    @map("customer_id")
+  vehicleId             Int                    @map("vehicle_id")
+  entryTime             DateTime               @default(dbgenerated("sysutcdatetime()")) @map("entry_time")
+  exitTime              DateTime?              @map("exit_time")
+  enteredById           Int?                   @map("entered_by")
+  remarks               String?                @db.NVarChar(500)
+  createdById           Int?                   @map("created_by")
+  modifiedById          Int?                   @map("modified_by")
+  createdAt             DateTime               @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+  createdBy             User?                  @relation("GateEntryCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  customer              Customer               @relation(fields: [customerId], references: [id], onUpdate: NoAction)
+  enteredBy             User?                  @relation("GateEntryEnteredBy", fields: [enteredById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  location              Location               @relation(fields: [locationId], references: [id], onUpdate: NoAction)
+  modifiedBy            User?                  @relation("GateEntryModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  status                StatusMaster?          @relation(fields: [statusId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vehicle               Vehicle                @relation(fields: [vehicleId], references: [id], onUpdate: NoAction)
+  jobCards              JobCard[]
+  notifications         Notification[]
+  processStageTrackings ProcessStageTracking[]
+
+  @@index([locationId])
+  @@index([statusId])
+  @@index([entryType])
+  @@index([customerId])
+  @@index([vehicleId])
+  @@index([enteredById])
+  @@index([entryTime])
+  @@map("gate_entries")
+}
+
+model ServiceCategory {
+  id           Int           @id @default(autoincrement())
+  name         String        @db.NVarChar(100)
+  slug         String        @unique @db.NVarChar(120)
+  description  String?       @db.NVarChar(500)
+  isActive     Boolean       @default(true) @map("is_active")
+  createdById  Int?          @map("created_by")
+  modifiedById Int?          @map("modified_by")
+  createdAt    DateTime      @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+  createdBy    User?         @relation("ServiceCategoryCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedBy   User?         @relation("ServiceCategoryModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  serviceItems ServiceItem[]
+
+  @@map("service_categories")
+}
+
+model ServiceItem {
+  id               Int              @id @default(autoincrement())
+  categoryId       Int              @map("category_id")
+  name             String           @db.NVarChar(150)
+  slug             String           @unique @db.NVarChar(180)
+  description      String?
+  defaultPrice     Decimal          @default(0) @map("default_price") @db.Decimal(10, 2)
+  estimatedMinutes Int?             @map("estimated_minutes")
+  isActive         Boolean          @default(true) @map("is_active")
+  createdById      Int?             @map("created_by")
+  modifiedById     Int?             @map("modified_by")
+  createdAt        DateTime         @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+  jobCardServices  JobCardService[]
+  category         ServiceCategory  @relation(fields: [categoryId], references: [id], onUpdate: NoAction)
+  createdBy        User?            @relation("ServiceItemCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedBy       User?            @relation("ServiceItemModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("service_items")
+}
+
+model JobCard {
+  id                    Int                    @id @default(autoincrement())
+  locationId            Int                    @map("location_id")
+  jobCardNo             String                 @unique @map("job_card_no") @db.NVarChar(30)
+  slug                  String                 @unique @db.NVarChar(180)
+  gateEntryId           Int                    @map("gate_entry_id")
+  customerId            Int                    @map("customer_id")
+  vehicleId             Int                    @map("vehicle_id")
+  createdById           Int?                   @map("created_by")
+  modifiedById          Int?                   @map("modified_by")
+  expectedDeliveryAt    DateTime?              @map("expected_delivery_at")
+  actualDeliveryAt      DateTime?              @map("actual_delivery_at")
+  isDeliveryDelayNotified Boolean              @default(false) @map("is_delivery_delay_notified")
+  deliveryDelayNotifiedAt DateTime?            @map("delivery_delay_notified_at")
+  approvalStatusId      Int?                   @map("approval_status_id")
+  currentStatusId       Int?                   @map("current_status_id")
+  totalEstimate         Decimal                @default(0) @map("total_estimate") @db.Decimal(10, 2)
+  serviceSubtotal       Decimal?               @map("service_subtotal") @db.Decimal(10, 2)
+  taxRate               Decimal?               @map("tax_rate") @db.Decimal(5, 2)
+  taxAmount             Decimal?               @map("tax_amount") @db.Decimal(10, 2)
+  discountAmount        Decimal?               @map("discount_amount") @db.Decimal(10, 2)
+  finalAmount           Decimal?               @map("final_amount") @db.Decimal(10, 2)
+  discountReason        String?                @map("discount_reason") @db.NVarChar(255)
+  customerComplaint     String?                @map("customer_complaint")
+  additionalNotes       String?                @map("additional_notes")
+  createdAt             DateTime               @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+  approvals             JobCardApproval[]
+  services              JobCardService[]
+  statusLogs            JobCardStatusLog[]
+  approvalStatus        StatusMaster?          @relation("JobCardApprovalStatus", fields: [approvalStatusId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdBy             User?                  @relation("JobCardCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  currentStatus         StatusMaster?          @relation("JobCardCurrentStatus", fields: [currentStatusId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  customer              Customer               @relation(fields: [customerId], references: [id], onUpdate: NoAction)
+  gateEntry             GateEntry              @relation(fields: [gateEntryId], references: [id], onUpdate: NoAction)
+  location              Location               @relation(fields: [locationId], references: [id], onUpdate: NoAction)
+  modifiedBy            User?                  @relation("JobCardModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vehicle               Vehicle                @relation(fields: [vehicleId], references: [id], onUpdate: NoAction)
+  notifications         Notification[]
+  processStageTrackings ProcessStageTracking[]
+  workAssignments       WorkAssignment[]
+
+  @@map("job_cards")
+}
+
+model JobCardApproval {
+  id                  Int              @id @default(autoincrement())
+  jobCardId           Int              @map("job_card_id")
+  statusId            Int?             @map("status_id")
+  approvalCode        String?          @map("approval_code") @db.NVarChar(30)
+  approvalType        String           @map("approval_type") @db.NVarChar(30)
+  totalAmount         Decimal          @default(0) @map("total_amount") @db.Decimal(10, 2)
+  whatsappMessageId   String?          @map("whatsapp_message_id") @db.NVarChar(255)
+  customerResponse    String?          @map("customer_response")
+  mechanicExplanation String?          @map("mechanic_explanation")
+  sentAt              DateTime?        @map("sent_at")
+  respondedAt         DateTime?        @map("responded_at")
+  createdById         Int?             @map("created_by")
+  modifiedById        Int?             @map("modified_by")
+  createdAt           DateTime         @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt           DateTime         @updatedAt @map("updated_at")
+  createdBy           User?            @relation("JobCardApprovalCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  jobCard             JobCard          @relation(fields: [jobCardId], references: [id], onUpdate: NoAction)
+  modifiedBy          User?            @relation("JobCardApprovalModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  status              StatusMaster?    @relation(fields: [statusId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  services            JobCardService[]
+
+  @@index([approvalCode])
+  @@map("job_card_approvals")
+}
+
+model JobCardService {
+  id                     Int              @id @default(autoincrement())
+  jobCardId              Int              @map("job_card_id")
+  approvalId             Int?             @map("approval_id")
+  parentJobCardServiceId Int?             @map("parent_job_card_service_id")
+  serviceItemId          Int              @map("service_item_id")
+  approvalStatusId       Int?             @map("approval_status_id")
+  serviceStatusId        Int?             @map("service_status_id")
+  serviceName            String           @map("service_name") @db.NVarChar(150)
+  price                  Decimal          @db.Decimal(10, 2)
+  quantity               Int              @default(1)
+  isAdditional           Boolean          @default(false) @map("is_additional")
+  createdById            Int?             @map("created_by")
+  modifiedById           Int?             @map("modified_by")
+  createdAt              DateTime         @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt              DateTime         @updatedAt @map("updated_at")
+  parentService          JobCardService?  @relation("AdditionalWorkParentService", fields: [parentJobCardServiceId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "FK_job_card_services_parent_job_card_service")
+  additionalServices     JobCardService[] @relation("AdditionalWorkParentService")
+  approval               JobCardApproval? @relation(fields: [approvalId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  approvalStatus         StatusMaster?    @relation("JobCardServiceApprovalStatus", fields: [approvalStatusId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdBy              User?            @relation("JobCardServiceCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  jobCard                JobCard          @relation(fields: [jobCardId], references: [id], onUpdate: NoAction)
+  modifiedBy             User?            @relation("JobCardServiceModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  serviceItem            ServiceItem      @relation(fields: [serviceItemId], references: [id], onUpdate: NoAction)
+  serviceStatus          StatusMaster?    @relation("JobCardServiceStatus", fields: [serviceStatusId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  workAssignments        WorkAssignment[]
+  histories              JobCardServiceHistory[]
+
+  @@index([parentJobCardServiceId])
+  @@map("job_card_services")
+}
+
+model WorkAssignment {
+  id               Int            @id @default(autoincrement())
+  locationId       Int            @map("location_id")
+  jobCardId        Int            @map("job_card_id")
+  jobCardServiceId Int            @map("job_card_service_id")
+  statusId         Int?           @map("status_id")
+  assignedUserId   Int            @map("assigned_user_id")
+  assignedById     Int?           @map("assigned_by")
+  bayId            Int?           @map("bay_id")
+  assignedAt       DateTime       @default(dbgenerated("sysutcdatetime()")) @map("assigned_at")
+  startedAt        DateTime?      @map("started_at")
+  completedAt      DateTime?      @map("completed_at")
+  remarks          String?
+  createdById      Int?           @map("created_by")
+  modifiedById     Int?           @map("modified_by")
+  createdAt        DateTime       @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+  assignedBy       User?          @relation("WorkAssignmentAssignedBy", fields: [assignedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  assignedUser     User           @relation("WorkAssignmentAssignedUser", fields: [assignedUserId], references: [id], onUpdate: NoAction)
+  createdBy        User?          @relation("WorkAssignmentCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  jobCard          JobCard        @relation(fields: [jobCardId], references: [id], onUpdate: NoAction)
+  jobCardService   JobCardService @relation(fields: [jobCardServiceId], references: [id], onUpdate: NoAction)
+  location         Location       @relation(fields: [locationId], references: [id], onUpdate: NoAction)
+  modifiedBy       User?          @relation("WorkAssignmentModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  status           StatusMaster?  @relation(fields: [statusId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([locationId])
+  @@index([jobCardId])
+  @@index([jobCardServiceId])
+  @@index([assignedUserId])
+  @@index([statusId])
+  @@index([bayId])
+  @@map("work_assignments")
+}
+
+model MediaFile {
+  id             Int      @id @default(autoincrement())
+  moduleRecordId Int      @map("module_id")
+  moduleName     String   @map("module_name") @db.NVarChar(100)
+  uploadedById   Int?     @map("uploaded_by")
+  fileType       String   @map("file_type") @db.NVarChar(30)
+  category       String   @db.NVarChar(50)
+  fileName       String?  @map("file_name") @db.NVarChar(255)
+  fileUrl        String   @map("file_url")
+  blobName       String?  @map("blob_name") @db.NVarChar(500)
+  containerName  String?  @map("container_name") @db.NVarChar(100)
+  mimeType       String?  @map("mime_type") @db.NVarChar(100)
+  fileSizeKb     Int?     @map("file_size_kb")
+  createdById    Int?     @map("created_by")
+  modifiedById   Int?     @map("modified_by")
+  createdAt      DateTime @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  createdBy      User?    @relation("MediaFileCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedBy     User?    @relation("MediaFileModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  uploadedBy     User?    @relation("MediaFileUploadedBy", fields: [uploadedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([moduleName, moduleRecordId])
+  @@map("media_files")
+}
+
+model JobCardStatusLog {
+  id          Int           @id @default(autoincrement())
+  jobCardId   Int           @map("job_card_id")
+  statusId    Int?          @map("status_id")
+  changedById Int?          @map("changed_by")
+  remarks     String?
+  createdAt   DateTime      @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  changedBy   User?         @relation("JobCardStatusLogChangedBy", fields: [changedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  jobCard     JobCard       @relation(fields: [jobCardId], references: [id], onUpdate: NoAction)
+  status      StatusMaster? @relation(fields: [statusId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("job_card_status_logs")
+}
+
+model ServiceCenterSetting {
+  id              Int            @id @default(autoincrement())
+  serviceCenterId Int?           @map("service_center_id")
+  locationId      Int?           @map("location_id")
+  settingKey      String         @map("setting_key") @db.NVarChar(150)
+  settingValue    String?        @map("setting_value")
+  valueType       String?        @map("value_type") @db.NVarChar(50)
+  description     String?        @db.NVarChar(500)
+  isActive        Boolean        @default(true) @map("is_active")
+  createdById     Int?           @map("created_by")
+  modifiedById    Int?           @map("modified_by")
+  createdAt       DateTime       @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  createdBy       User?          @relation("ServiceCenterSettingCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  location        Location?      @relation(fields: [locationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  modifiedBy      User?          @relation("ServiceCenterSettingModifiedBy", fields: [modifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  serviceCenter   ServiceCenter? @relation(fields: [serviceCenterId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([serviceCenterId, locationId, settingKey])
+  @@map("service_center_settings")
+}
+
+model AuditLog {
+  id                BigInt           @id @default(autoincrement())
+  locationId        Int?             @map("location_id")
+  tableName         String           @map("table_name") @db.NVarChar(250)
+  recordId          BigInt           @map("record_id")
+  actionType        String           @map("action_type") @db.NVarChar(50)
+  performedByUserId Int              @map("performed_by_user_id")
+  performedAt       DateTime         @default(dbgenerated("sysutcdatetime()")) @map("performed_at")
+  recordName        String?          @map("record_name") @db.NVarChar(500)
+  transactionId     String           @map("transaction_id") @db.UniqueIdentifier
+  comments          String?
+  createdAt         DateTime         @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  details           AuditLogDetail[]
+  location          Location?        @relation(fields: [locationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  performedBy       User             @relation("AuditLogPerformedBy", fields: [performedByUserId], references: [id], onUpdate: NoAction)
+
+  @@index([tableName, recordId])
+  @@index([transactionId])
+  @@map("audit_logs")
+}
+
+model AuditLogDetail {
+  id         BigInt   @id @default(autoincrement())
+  auditLogId BigInt   @map("audit_log_id")
+  fieldName  String   @map("field_name") @db.NVarChar(250)
+  oldValue   String?  @map("old_value")
+  newValue   String?  @map("new_value")
+  dataType   String?  @map("data_type") @db.NVarChar(50)
+  createdAt  DateTime @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+  auditLog   AuditLog @relation(fields: [auditLogId], references: [id], onUpdate: NoAction)
+
+  @@map("audit_log_details")
+}
+
+model JobCardServiceHistory {
+  id               Int            @id @default(autoincrement())
+  jobCardServiceId Int            @map("job_card_service_id")
+  actionTypeId     Int            @map("action_type_id")
+  fromStatusId     Int?           @map("from_status_id")
+  toStatusId       Int            @map("to_status_id")
+  changedById      Int            @map("changed_by")
+  reason           String?        @db.NVarChar(500)
+  createdAt        DateTime       @default(dbgenerated("sysutcdatetime()")) @map("created_at")
+
+  jobCardService   JobCardService @relation(fields: [jobCardServiceId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  changedBy        User           @relation(fields: [changedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  actionType       StatusMaster   @relation("HistoryActionType", fields: [actionTypeId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  fromStatus       StatusMaster?  @relation("HistoryFromStatus", fields: [fromStatusId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  toStatus         StatusMaster   @relation("HistoryToStatus", fields: [toStatusId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([jobCardServiceId])
+  @@index([actionTypeId])
+  @@map("job_card_service_history")
+}
