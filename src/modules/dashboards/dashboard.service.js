@@ -20,9 +20,6 @@ const getBodyShopDashboard = (locationId) => {
   return dashboardRepository.getBodyShopDashboard({ locationId });
 };
 
-const getWaterWashDashboard = (locationId) => {
-  return dashboardRepository.getWaterWashDashboard({ locationId });
-};
 
 const getTvKioskDashboard = (locationId) => {
   return dashboardRepository.getTvKioskDashboard({ locationId });
@@ -34,6 +31,5 @@ module.exports = {
   getFloorSupervisorDashboard,
   getManagerDashboard,
   getBodyShopDashboard,
-  getWaterWashDashboard,
   getTvKioskDashboard
 };

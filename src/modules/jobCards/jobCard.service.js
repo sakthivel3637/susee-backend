@@ -57,11 +57,10 @@ const JOB_CARD_APPROVED_STATUS_CODES = ['APPROVED'];
 const JOB_CARD_REJECTED_STATUS_CODES = ['REJECTED'];
 const APPROVAL_APPROVED_STATUS_CODES = ['APPROVED'];
 const APPROVAL_REJECTED_STATUS_CODES = ['REJECTED'];
-const DEPARTMENT_ORDER = ['mechanical', 'body-shop', 'water-wash'];
+const DEPARTMENT_ORDER = ['mechanical', 'body-shop'];
 const DEPARTMENT_ALIASES = {
   mechanical: ['mechanical', 'mechanic', 'mechnanic', 'floor'],
-  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'denting'],
-  'water-wash': ['water-wash', 'water_wash', 'water wash', 'wash']
+  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'denting']
 };
 const ASSIGNMENT_STATUS_CODES = {
   mechanical: {
@@ -73,11 +72,6 @@ const ASSIGNMENT_STATUS_CODES = {
     assigned: ['BODY_SHOP_ASSIGNED'],
     inProgress: ['BODY_SHOP_IN_PROGRESS'],
     completed: ['BODY_SHOP_COMPLETED']
-  },
-  'water-wash': {
-    assigned: ['WATER_WASH_ASSIGNED'],
-    inProgress: ['WATER_WASH_IN_PROGRESS'],
-    completed: ['WATER_WASH_COMPLETED']
   }
 };
 const READY_FOR_DELIVERY_STATUS_CODES = ['READY_FOR_DELIVERY'];
@@ -244,10 +238,7 @@ const ROLE_ALIASES = {
   bodyshop: 'body_shop_supervisor',
   bodyshop_supervisor: 'body_shop_supervisor',
   floor: 'floor_supervisor',
-  mechanical_supervisor: 'floor_supervisor',
-  water_wash: 'water_wash_team',
-  water_wash_supervisor: 'water_wash_team',
-  wash: 'water_wash_team'
+  mechanical_supervisor: 'floor_supervisor'
 };
 
 const normalizeRoleSlug = (roleSlug) => {
@@ -258,25 +249,19 @@ const normalizeRoleSlug = (roleSlug) => {
 const PRIVILEGED_SERVICE_STATUS_ROLES = new Set(['admin', 'super_admin', 'manager', 'managing_director']);
 
 const ROLE_DEPARTMENTS = {
-  floor_supervisor: 'mechanical',
+  floor_supervisor: ['mechanical', 'body-shop'],
   mechanical: 'mechanical',
   mechanic: 'mechanical',
-  body_shop_supervisor: 'body-shop',
-  water_wash_supervisor: 'water-wash',
-  water_wash_team: 'water-wash',
-  water_wash: 'water-wash'
+  body_shop_supervisor: 'body-shop'
 };
 const ROLE_JOB_CARD_DEPARTMENTS = {
-  body_shop_supervisor: 'body-shop',
-  water_wash_supervisor: 'water-wash',
-  water_wash_team: 'water-wash',
-  water_wash: 'water-wash'
+  floor_supervisor: ['mechanical', 'body-shop'],
+  body_shop_supervisor: 'body-shop'
 };
 
 const MODULE_DEPARTMENTS = {
-  'floor-supervisor': 'mechanical',
-  'body-shop-supervisor': 'body-shop',
-  'water-wash-team': 'water-wash'
+  'floor-supervisor': ['mechanical', 'body-shop'],
+  'body-shop-supervisor': 'body-shop'
 };
 const PRIVILEGED_MODULES = new Set(['admin', 'manager', 'managing-director']);
 
@@ -289,7 +274,14 @@ const getAllowedDepartments = (user) => {
   if (Array.isArray(user.modules)) {
     for (const mod of user.modules) {
       if (PRIVILEGED_MODULES.has(mod)) isPrivileged = true;
-      if (MODULE_DEPARTMENTS[mod]) allowed.add(MODULE_DEPARTMENTS[mod]);
+      const dept = MODULE_DEPARTMENTS[mod];
+      if (dept) {
+        if (Array.isArray(dept)) {
+          dept.forEach((d) => allowed.add(d));
+        } else {
+          allowed.add(dept);
+        }
+      }
     }
   }
 
@@ -300,7 +292,11 @@ const getAllowedDepartments = (user) => {
 
   const deptFromRole = ROLE_DEPARTMENTS[roleSlug];
   if (deptFromRole) {
-    allowed.add(deptFromRole);
+    if (Array.isArray(deptFromRole)) {
+      deptFromRole.forEach((d) => allowed.add(d));
+    } else {
+      allowed.add(deptFromRole);
+    }
   }
 
   if (isPrivileged) return ['all'];
@@ -308,8 +304,17 @@ const getAllowedDepartments = (user) => {
 };
 
 const getServiceDepartment = (service) => {
-  const category = service && service.serviceItem && service.serviceItem.category;
-  return normalizeDepartment(category && (category.slug || category.name));
+  if (!service) return null;
+  const category = service.serviceItem ? service.serviceItem.category : (service.category || null);
+  if (category) {
+    const dept = normalizeDepartment(category.slug || category.name);
+    if (dept) return dept;
+  }
+  if (service.categoryName) {
+    const dept = normalizeDepartment(service.categoryName);
+    if (dept) return dept;
+  }
+  return null;
 };
 
 const getQueryDepartment = (query, user) => {
@@ -497,6 +502,13 @@ const syncAssignmentsForServiceStatus = async (tx, service, serviceStatus, user)
         modifiedById: user && user.userId ? user.userId : null
       }
     });
+
+    assignment.statusId = assignmentStatus.id;
+    assignment.status = assignmentStatus;
+    assignment.startedAt = assignment.startedAt || now;
+    if (shouldComplete) {
+      assignment.completedAt = assignment.completedAt || now;
+    }
   }
 };
 
@@ -537,20 +549,15 @@ const deriveJobCardStatus = async (tx, jobCard) => {
     break;
   }
 
-  // If the active department is water-wash, but there's a postponed department,
-  // we must return to the postponed department because water wash is strictly done last.
   let targetDepartment = activeDepartment || firstPostponed;
-  if (activeDepartment === 'water-wash' && firstPostponed) {
-    targetDepartment = firstPostponed;
-  }
 
   if (targetDepartment) {
     const services = getDepartmentServices(jobCard, targetDepartment).filter(service => isApprovedForWork(service) && !isRejectedAdditionalService(service));
-    
+
     // If it's a postponed department that we auto-returned to, 
     // it shouldn't show as IN_PROGRESS unless someone actually started working on it.
     // If all unfinished services are POSTPONED, it should be ASSIGNED.
-    const hasActiveUncompleted = services.some(service => 
+    const hasActiveUncompleted = services.some(service =>
       !isJobCardServiceCompleted(service) && getStatusCode(service.serviceStatus) !== 'POSTPONED'
     );
 
@@ -625,6 +632,34 @@ const toAssignmentSummary = (assignment, bayMap = new Map()) => ({
     : null
 });
 
+const computeWorkType = (jobCard) => {
+  const services = jobCard.services || [];
+  const assignmentServices = (jobCard.workAssignments || []).map((a) => a.jobCardService).filter(Boolean);
+  const allServices = [...services, ...assignmentServices];
+
+  let hasMechanical = false;
+  let hasBodyShop = false;
+
+  for (const s of allServices) {
+    const dept = getServiceDepartment(s);
+    if (dept === 'mechanical') hasMechanical = true;
+    if (dept === 'body-shop') hasBodyShop = true;
+  }
+
+  if (!hasMechanical && !hasBodyShop) {
+    const statusCode = String(jobCard.currentStatus?.statusCode || '').toUpperCase();
+    if (statusCode.includes('BODY_SHOP')) {
+      hasBodyShop = true;
+    } else {
+      hasMechanical = true;
+    }
+  }
+
+  if (hasMechanical && hasBodyShop) return 'Both';
+  if (hasBodyShop) return 'Body Shop';
+  return 'Mechanic';
+};
+
 const toJobCardListResponse = (jobCard, department, bayMap = new Map()) => {
   const allAssignments = (jobCard.workAssignments || []).map((assignment) => toAssignmentSummary(assignment, bayMap));
   const activeAssignments = allAssignments.filter((assignment) => !assignment.completedAt);
@@ -651,9 +686,11 @@ const toJobCardListResponse = (jobCard, department, bayMap = new Map()) => {
     ).values()
   );
   const assignedBay = assignedBays[0] || null;
+  const workType = computeWorkType(jobCard);
 
   return {
     ...jobCard,
+    workType,
     workAssignments: activeAssignments,
     activeAssignments,
     assignmentHistory: displayAssignments,
@@ -716,9 +753,12 @@ const listJobCards = async (query, user) => {
   }
 
   if (query.status) {
+    const statusCodes = String(query.status).split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
     where.currentStatus = {
       is: {
-        statusCode: String(query.status).trim().toUpperCase(),
+        ...(statusCodes.length === 1
+          ? { statusCode: statusCodes[0] }
+          : { statusCode: { in: statusCodes } }),
         ...statusModuleFilter(STATUS_MODULE_CODES.JOB_CARD_STATUS)
       }
     };
@@ -749,13 +789,19 @@ const listJobCards = async (query, user) => {
   }
 
   const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
+  const sortBy = query.sortBy === 'assignedAt' ? 'assignedAt' : 'createdAt';
+  // For mechanic/bodyshop tabs: sort by updatedAt desc (job card updatedAt is refreshed on assignment)
+  // For delivery/other: sort by createdAt as normal
+  const orderBy = sortBy === 'assignedAt'
+    ? { updatedAt: 'desc' }
+    : { createdAt: sortOrder };
 
   const [jobCards, total] = await Promise.all([
     prisma.jobCard.findMany({
       where,
       skip,
       take: limit,
-      orderBy: { createdAt: sortOrder },
+      orderBy,
       include: {
         customer: {
           select: { id: true, fullName: true, mobileNo: true }
@@ -768,6 +814,27 @@ const listJobCards = async (query, user) => {
         },
         location: {
           select: { id: true, locationName: true, locationCode: true }
+        },
+        services: {
+          select: {
+            id: true,
+            serviceName: true,
+            isAdditional: true,
+            approvalStatus: {
+              select: { statusCode: true }
+            },
+            serviceItem: {
+              select: {
+                category: {
+                  select: {
+                    id: true,
+                    name: true,
+                    slug: true
+                  }
+                }
+              }
+            }
+          }
         },
         workAssignments: {
           include: {
@@ -917,6 +984,19 @@ const getJobCardById = async (id, user) => {
 
   if (!jobCard) {
     throw new Error('Job Card not found');
+  }
+
+  try {
+    const approvals = await prisma.$queryRaw`
+      SELECT id, approval_code AS approvalCode, approval_type AS approvalType, total_amount AS totalAmount, mechanic_explanation AS mechanicExplanation, voice_note_url AS voiceNoteUrl, customer_response AS customerResponse, sent_at AS sentAt, created_at AS createdAt
+      FROM job_card_approvals
+      WHERE job_card_id = ${jobCard.id}
+      ORDER BY created_at DESC
+    `;
+    jobCard.approvals = approvals || [];
+  } catch (e) {
+    console.error('Failed to fetch jobCard approvals:', e);
+    jobCard.approvals = [];
   }
 
   return jobCard;
@@ -1145,7 +1225,17 @@ const updateJobCard = async (id, payload, user) => {
     if (serviceStatusUpdates.length > 0) {
       const existingServicesById = new Map(existingJobCard.services.map((service) => [service.id, service]));
 
-      for (const item of serviceStatusUpdates) {
+      const sortedServiceStatusUpdates = [...serviceStatusUpdates].sort((a, b) => {
+        const sA = existingServicesById.get(a.jobCardServiceId);
+        const sB = existingServicesById.get(b.jobCardServiceId);
+        const deptA = getServiceDepartment(sA);
+        const deptB = getServiceDepartment(sB);
+        const indexA = DEPARTMENT_ORDER.indexOf(deptA);
+        const indexB = DEPARTMENT_ORDER.indexOf(deptB);
+        return (indexA === -1 ? 99 : indexA) - (indexB === -1 ? 99 : indexB);
+      });
+
+      for (const item of sortedServiceStatusUpdates) {
         const existingService = existingServicesById.get(item.jobCardServiceId);
         if (!existingService) {
           throw createHttpError(400, 'One or more selected services are invalid for this job card');
@@ -1168,6 +1258,9 @@ const updateJobCard = async (id, payload, user) => {
             modifiedById: user && user.userId ? user.userId : null
           }
         });
+
+        existingService.serviceStatusId = serviceStatus.id;
+        existingService.serviceStatus = serviceStatus;
       }
     }
 
@@ -1480,7 +1573,7 @@ const postponeJobCardService = async (jobCardId, serviceId, reason, user) => {
     });
 
     if (!service) throw createHttpError(404, 'Service not found in Job Card');
-    
+
     const currentJobCardStatusCode = getStatusCode(service.jobCard.currentStatus);
     if (FINAL_JOB_CARD_STATUS_CODES.includes(currentJobCardStatusCode)) {
       throw createHttpError(400, 'Cannot switch service for a finalized job card');
@@ -1492,7 +1585,7 @@ const postponeJobCardService = async (jobCardId, serviceId, reason, user) => {
     }
 
     const postponedStatus = await resolveRequiredStatus(tx, 'job-card-service', ['POSTPONED'], 'Postponed');
-    
+
     const activeAssignment = service.workAssignments[0];
     if (activeAssignment) {
       const onHoldStatus = await resolveRequiredStatus(tx, 'work-assignment', ['ON_HOLD'], 'On Hold');
@@ -1500,7 +1593,7 @@ const postponeJobCardService = async (jobCardId, serviceId, reason, user) => {
         where: { id: activeAssignment.id },
         data: { statusId: onHoldStatus.id, modifiedById: user?.userId || null }
       });
-      
+
       await tx.bay.updateMany({
         where: { currentWorkAssignmentId: activeAssignment.id },
         data: { currentWorkAssignmentId: null }
@@ -1550,7 +1643,7 @@ const postponeJobCardService = async (jobCardId, serviceId, reason, user) => {
         data: { currentStatusId: newJobCardStatus.id }
       });
     }
-    
+
     getSocket()?.emit('jobCardQueueUpdate', { locationId: fullJobCard.locationId });
 
     return fullJobCard;
@@ -1619,7 +1712,7 @@ const resumeJobCardService = async (jobCardId, serviceId, bayId, mechanicId, use
     });
 
     const resumeAction = await resolveRequiredStatus(tx, 'service-history-actions', ['RESUME'], 'Resume');
-    
+
     await tx.jobCardServiceHistory.create({
       data: {
         jobCardServiceId: service.id,
@@ -1697,23 +1790,12 @@ const skipJobCardDepartment = async (jobCardId, departmentSlug, reason, user) =>
     }
 
     const currentDeptIndex = DEPARTMENT_ORDER.indexOf(targetDepartment);
-    
-    // Check if there are services in downstream departments (excluding water-wash)
+
+    // Check if there are services in downstream departments
     let hasDownstreamServices = false;
     for (let i = currentDeptIndex + 1; i < DEPARTMENT_ORDER.length; i++) {
       const downstreamDept = DEPARTMENT_ORDER[i];
-      if (downstreamDept === 'water-wash') continue;
-      const hasServices = jobCard.services.some(s => {
-        let sDept = null;
-        const sNormalizedValue = normalizeText(s.serviceItem?.category?.slug || s.serviceItem?.category?.name);
-        for (const dept of DEPARTMENT_ORDER) {
-          if (DEPARTMENT_ALIASES[dept].some((alias) => normalizeText(alias) === sNormalizedValue)) {
-            sDept = dept;
-            break;
-          }
-        }
-        return sDept === downstreamDept;
-      });
+      const hasServices = jobCard.services.some(s => getServiceDepartment(s) === downstreamDept);
       if (hasServices) {
         hasDownstreamServices = true;
         break;
@@ -1721,19 +1803,12 @@ const skipJobCardDepartment = async (jobCardId, departmentSlug, reason, user) =>
     }
 
     if (!hasDownstreamServices) {
-      throw createHttpError(400, 'Cannot skip this department because Water Wash is the only remaining stage, or no downstream services exist.');
+      throw createHttpError(400, 'Cannot skip this department because no downstream services exist.');
     }
 
     // 3. Find all services for the TARGET department that are NOT completed/cancelled
     const targetServices = jobCard.services.filter(s => {
-      let sDept = null;
-      const sNormalizedValue = normalizeText(s.serviceItem?.category?.slug || s.serviceItem?.category?.name);
-      for (const dept of DEPARTMENT_ORDER) {
-        if (DEPARTMENT_ALIASES[dept].some((alias) => normalizeText(alias) === sNormalizedValue)) {
-          sDept = dept;
-          break;
-        }
-      }
+      const sDept = getServiceDepartment(s);
       const sStatus = getStatusCode(s.serviceStatus);
       return sDept === targetDepartment && !['COMPLETED', 'DELIVERED', 'POSTPONED', 'REJECTED', 'CANCELLED'].includes(sStatus);
     });
@@ -1744,12 +1819,12 @@ const skipJobCardDepartment = async (jobCardId, departmentSlug, reason, user) =>
 
     // 4. Update them to POSTPONED
     const postponedStatus = await resolveRequiredStatus(tx, 'job-card-service', ['POSTPONED'], 'Postponed');
-    
+
     // Release active assignments
     let onHoldStatus = null;
     try {
       onHoldStatus = await resolveRequiredStatus(tx, 'assignment', ['ON_HOLD'], 'On Hold');
-    } catch(err) {
+    } catch (err) {
       // If assignment ON_HOLD doesn't exist, we fallback to PENDING or ignore assignment update?
       // Wait, we need it. Let's just clear the assignment.
     }
@@ -1759,10 +1834,10 @@ const skipJobCardDepartment = async (jobCardId, departmentSlug, reason, user) =>
       if (service.workAssignments.length > 0) {
         const activeAssignment = service.workAssignments[0];
         if (onHoldStatus) {
-           await tx.workAssignment.update({
-             where: { id: activeAssignment.id },
-             data: { statusId: onHoldStatus.id, bayId: null }
-           });
+          await tx.workAssignment.update({
+            where: { id: activeAssignment.id },
+            data: { statusId: onHoldStatus.id, bayId: null }
+          });
         }
         await syncAssignmentPendingStages(tx, activeAssignment.id, user);
       }
@@ -1784,7 +1859,7 @@ const skipJobCardDepartment = async (jobCardId, departmentSlug, reason, user) =>
       await tx.jobCardServiceHistory.create({
         data: {
           jobCardServiceId: service.id,
-          actionTypeId: switchAction.id, 
+          actionTypeId: switchAction.id,
           fromStatusId: service.serviceStatusId,
           toStatusId: postponedStatus.id,
           reason: reason || 'Department skipped',

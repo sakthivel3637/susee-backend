@@ -42,15 +42,6 @@ const MENU_SEED_DATA = [
     ]
   },
   {
-    module: 'water-wash-team',
-    menus: [
-      { name: 'Dashboard', path: '/water-wash-dashboard', icon: 'LayoutDashboard' },
-      { name: 'Assign Member', path: '/water-wash-assign-member', icon: 'User' },
-      { name: 'Job Cards', path: '/job-cards', icon: 'ClipboardList' },
-      { name: 'Notifications', path: '/notifications', icon: 'Bell' }
-    ]
-  },
-  {
     module: 'manager',
     menus: [
       { name: 'Manager Dashboard', path: '/manager-dashboard', icon: 'LayoutDashboard' },

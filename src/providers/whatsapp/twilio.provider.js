@@ -21,7 +21,7 @@ const toTwilioProviderError = (error) => {
 };
 
 class TwilioProvider {
-  async sendWhatsAppMessage({ to, body, contentSid, contentVariables }) {
+  async sendWhatsAppMessage({ to, body, contentSid, contentVariables, mediaUrl }) {
     const client = getTwilioClient();
     const from = normalizeWhatsAppSender(env.twilio.whatsappFrom);
 
@@ -35,12 +35,28 @@ class TwilioProvider {
         to
       };
 
-      if (contentSid) {
-        messagePayload.contentSid = contentSid;
-        if (contentVariables) {
-          messagePayload.contentVariables = contentVariables;
+      if (mediaUrl) {
+        const urls = Array.isArray(mediaUrl) ? mediaUrl : [mediaUrl];
+        const validUrls = urls.map((u) => String(u || '').trim()).filter(Boolean);
+        if (validUrls.length > 0) {
+          messagePayload.mediaUrl = validUrls;
         }
-      } else {
+      }
+
+      // Always try contentSid template first if provided (buttons, formatted message)
+      if (contentSid) {
+        try {
+          return await client.messages.create({
+            ...messagePayload,
+            contentSid,
+            ...(contentVariables ? { contentVariables } : {})
+          });
+        } catch (templateError) {
+          console.warn('[WhatsApp] contentSid template failed, falling back to body text:', templateError?.message || templateError);
+        }
+      }
+
+      if (body) {
         messagePayload.body = body;
       }
 
