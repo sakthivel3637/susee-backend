@@ -4,6 +4,7 @@ dist/
 coverage/
 .env
 .env.*
+*.txt
 !.env.example
 npm-debug.log*
 yarn-debug.log*

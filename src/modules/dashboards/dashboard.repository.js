@@ -485,7 +485,6 @@ const getManagerDashboard = async ({ locationId, page = 1, limit = 5 } = {}) => 
   let gatePendingCount = 0;
   let mechActive = 0, mechWaiting = 0;
   let bodyActive = 0, bodyWaiting = 0;
-  let washActive = 0, washWaiting = 0;
   let completedPipelineCount = 0;
 
   const vehicles = allJobCards.map(jc => {
@@ -527,11 +526,6 @@ const getManagerDashboard = async ({ locationId, page = 1, limit = 5 } = {}) => 
       else if (statusCode.includes('ASSIGNED')) bodyWaiting++;
       stageTone = 'purple';
       displayStage = 'Body Shop';
-    } else if (statusCode.includes('WATER_WASH')) {
-      if (statusCode.includes('IN_PROGRESS')) washActive++;
-      else if (statusCode.includes('ASSIGNED')) washWaiting++;
-      stageTone = 'info';
-      displayStage = 'Water Wash';
     } else if (statusCode.includes('PENDING')) {
       stageTone = 'danger';
     } else if (statusCode.includes('COMPLETED') || statusCode.includes('DELIVERED')) {
@@ -584,7 +578,6 @@ const getManagerDashboard = async ({ locationId, page = 1, limit = 5 } = {}) => 
       { label: 'Gate / JC Pending', value: gatePendingCount, meta: 'Awaiting job card', color: '#D97706', bg: '#FFF7ED' },
       { label: 'Mechanical', value: mechActive + mechWaiting, meta: `${mechActive} active - ${mechWaiting} waiting`, color: '#2563EB', bg: '#EFF6FF' },
       { label: 'Body Shop', value: bodyActive + bodyWaiting, meta: `${bodyActive} active - ${bodyWaiting} waiting`, color: '#7C3AED', bg: '#F5F3FF' },
-      { label: 'Water Wash', value: washActive + washWaiting, meta: `${washActive} washing - ${washWaiting} queue`, color: '#0891B2', bg: '#ECFEFF' },
       { label: 'Completed', value: completedPipelineCount, meta: 'Ready for delivery', color: '#059669', bg: '#ECFDF5' },
     ],
     vehicles: vehicles.slice((page - 1) * limit, page * limit),
@@ -720,144 +713,6 @@ const getBodyShopDashboard = async ({ locationId } = {}) => {
   };
 };
 
-const getWaterWashDashboard = async ({ locationId } = {}) => {
-  const dateFilter = {};
-  if (locationId) {
-    dateFilter.locationId = locationId;
-  }
-
-  const allJobCards = await prisma.jobCard.findMany({
-    where: dateFilter,
-    include: {
-      customer: true,
-      vehicle: {
-        include: { brand: true }
-      },
-      currentStatus: true,
-      workAssignments: {
-        include: {
-          assignedUser: true
-        }
-      },
-      services: {
-        include: {
-          serviceItem: {
-            include: {
-              category: true
-            }
-          }
-        }
-      }
-    },
-    orderBy: {
-      createdAt: 'desc'
-    }
-  });
-  const bayMap = await buildBayMapForJobCards(allJobCards);
-
-  const isWaterWashService = (service) => {
-    const catName = (service.serviceItem?.category?.name || '').toLowerCase();
-    const catSlug = (service.serviceItem?.category?.slug || '').toLowerCase();
-    const aliases = ['water-wash', 'water_wash', 'water wash', 'wash'];
-    return aliases.some(alias => catName.includes(alias) || catSlug.includes(alias));
-  };
-
-  const isMechanicalService = (service) => {
-    const catName = (service.serviceItem?.category?.name || '').toLowerCase();
-    const aliases = ['mechanical', 'mechanic', 'floor'];
-    return aliases.some(alias => catName.includes(alias));
-  };
-
-  const isBodyShopService = (service) => {
-    const catName = (service.serviceItem?.category?.name || '').toLowerCase();
-    const aliases = ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'denting'];
-    return aliases.some(alias => catName.includes(alias));
-  };
-
-  const waterWashJobCards = allJobCards.filter(jc =>
-    jc.services?.some(isWaterWashService)
-  );
-
-  let pendingCount = 0;
-  let assignedCount = 0;
-  let inProgressCount = 0;
-  let completedCount = 0;
-
-  const queue = waterWashJobCards.map(jc => {
-    let statusText = 'UNASSIGNED';
-    let mechanicText = '';
-
-    const statusCode = jc.currentStatus?.statusCode || '';
-
-    if (statusCode.includes('PENDING') || statusCode === 'GATE_ENTRY_CREATED' || statusCode === 'JOB_CARD_CREATED' || statusCode === 'APPROVAL_PENDING') {
-      pendingCount++;
-      statusText = 'UNASSIGNED';
-    } else if (statusCode.includes('ASSIGNED')) {
-      assignedCount++;
-      statusText = 'ASSIGNED';
-    } else if (statusCode.includes('IN_PROGRESS')) {
-      inProgressCount++;
-      statusText = 'ASSIGNED'; // Map to ASSIGNED for frontend display logic
-    } else if (statusCode.includes('READY')) {
-      completedCount++;
-      statusText = 'READY_FOR_DELIVERY';
-    } else if (statusCode.includes('COMPLETED')) {
-      completedCount++;
-      statusText = 'COMPLETED';
-    } else if (statusCode === 'DELIVERED') {
-      statusText = 'DELIVERED';
-    }
-
-    const assignment = jc.workAssignments && jc.workAssignments.length > 0 ? jc.workAssignments[0] : null;
-    if (jc.workAssignments && jc.workAssignments.length > 0) {
-      mechanicText = assignment.assignedUser?.fullName || '';
-    }
-    const bay = assignment && assignment.bayId ? toDashboardBay(bayMap.get(assignment.bayId)) : null;
-
-    const servicesList = jc.services
-      ?.filter(isWaterWashService)
-      .map(s => s.serviceItem?.name)
-      .filter(Boolean)
-      .join(', ') || 'Wash';
-
-    const previousStages = [];
-    if (jc.services?.some(isMechanicalService)) previousStages.push('Mech');
-    if (jc.services?.some(isBodyShopService)) previousStages.push('Body');
-
-    const waitMinutes = Math.max(0, Math.floor((new Date().getTime() - new Date(jc.createdAt).getTime()) / 60000));
-
-    return {
-      id: jc.jobCardNo || jc.id,
-      rawId: jc.id,
-      slug: jc.slug || jc.jobCardNo,
-      jobCardNo: jc.jobCardNo,
-      vehicleNumber: jc.vehicle?.registrationNo || 'N/A',
-      customer: jc.customer?.fullName || 'Unknown',
-      mobile: jc.customer?.mobileNo || 'N/A',
-      vehicle: `${jc.vehicle?.brand?.name || ''} ${jc.vehicle?.model || ''}`.trim() || 'Unknown',
-      details: `${jc.vehicle?.vehicleColor || ''} - ${jc.vehicle?.fuelType || ''}`.trim() || 'N/A',
-      washService: servicesList,
-      previousStages,
-      assignee: mechanicText,
-      bay,
-      bayName: bay ? bay.bayName : null,
-      status: statusText,
-      waitMinutes,
-      delivery: jc.expectedDeliveryAt ? jc.expectedDeliveryAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : 'N/A'
-    };
-  });
-
-  return {
-    kpis: {
-      pending: pendingCount,
-      assigned: assignedCount,
-      inProgress: inProgressCount,
-      completed: completedCount
-    },
-    queue: queue.filter(q => q.status !== 'DELIVERED')
-  };
-};
-
 const getTvKioskDashboard = async ({ locationId } = {}) => {
   const dateFilter = {};
   if (locationId) {
@@ -899,8 +754,6 @@ const getTvKioskDashboard = async ({ locationId } = {}) => {
     let column = 'MECHANICAL';
     if (statusCode === 'READY_FOR_DELIVERY' || statusCode.includes('DELIVERY')) {
       column = 'READY_FOR_DELIVERY';
-    } else if (statusCode.includes('WATER_WASH') || statusCode.includes('WASH')) {
-      column = 'WATER_WASH';
     } else if (statusCode.includes('BODY_SHOP') || statusCode.includes('PAINT')) {
       column = 'BODY_SHOP';
     } else if (statusCode.includes('MECHANICAL')) {
@@ -935,6 +788,5 @@ module.exports = {
   getFloorSupervisorDashboard,
   getManagerDashboard,
   getBodyShopDashboard,
-  getWaterWashDashboard,
   getTvKioskDashboard
 };

@@ -4,8 +4,6 @@ const ROLE_REDIRECT_PATHS = {
   crm_team: '/crm/job-card-create',
   floor_supervisor: '/floor/work-assignment',
   body_shop_supervisor: '/body-shop/queue',
-  water_wash_supervisor: '/water-wash-dashboard',
-  water_wash_team: '/water-wash/queue',
   manager: '/manager/dashboard',
   managing_director: '/md/dashboard'
 };

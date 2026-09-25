@@ -48,18 +48,33 @@ const ensureTwilioConfigured = () => {
   }
 };
 
-const sendWhatsAppMessage = async ({ to, body, contentSid, contentVariables }) => {
+const sendWhatsAppMessage = async ({ to, body, contentSid, contentVariables, mediaUrl }) => {
   ensureTwilioConfigured();
 
   return provider.sendWhatsAppMessage({
     to: normalizeIndianWhatsAppNumber(to),
     body,
     contentSid,
-    contentVariables
+    contentVariables,
+    mediaUrl
   });
 };
 
-const buildAdditionalWorkApprovalMessage = ({ jobCard, approval, services, explanation }) => {
+const sendWhatsAppVoiceNote = async ({ to, audioUrl, caption }) => {
+  if (!audioUrl) {
+    const error = new Error('Audio URL is required to send WhatsApp voice note');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return sendWhatsAppMessage({
+    to,
+    body: caption || '',
+    mediaUrl: [audioUrl]
+  });
+};
+
+const buildAdditionalWorkApprovalMessage = ({ jobCard, approval, services, explanation, voiceNoteUrl }) => {
   const customerName = jobCard.customer?.fullName || 'Customer';
   const vehicleNo = jobCard.vehicle?.registrationNo || 'your vehicle';
   const serviceLines = services.map((service, index) => {
@@ -78,14 +93,14 @@ const buildAdditionalWorkApprovalMessage = ({ jobCard, approval, services, expla
     '',
     `Total: ${formatCurrency(approval.totalAmount)}`,
     explanation ? `Mechanic explanation: ${explanation}` : null,
+    voiceNoteUrl ? `Voice Note: ${voiceNoteUrl}` : null,
     '',
     `Reply YES ${approval.approvalCode} to approve or NO ${approval.approvalCode} to reject.`
   ].filter(Boolean).join('\n');
 };
 
-const sendAdditionalWorkApproval = async ({ jobCard, approval, services, explanation }) => {
-  const body = buildAdditionalWorkApprovalMessage({ jobCard, approval, services, explanation });
-
+const sendAdditionalWorkApproval = async ({ jobCard, approval, services, explanation, voiceNoteUrl, mediaUrl }) => {
+  const resolvedVoiceNoteUrl = voiceNoteUrl || (Array.isArray(mediaUrl) ? mediaUrl[0] : mediaUrl) || null;
   const customerName = jobCard.customer?.fullName || 'Customer';
   const vehicleNo = jobCard.vehicle?.registrationNo || 'your vehicle';
   const serviceLines = services.map((service, index) => {
@@ -93,21 +108,49 @@ const sendAdditionalWorkApproval = async ({ jobCard, approval, services, explana
     return `${index + 1}. ${service.serviceName} x${service.quantity || 1} - ${formatCurrency(lineTotal)}`;
   });
 
-  const contentVariables = JSON.stringify({
-    '1': customerName,
-    '2': vehicleNo,
-    '3': jobCard.jobCardNo,
-    '4': approval.approvalCode,
-    '5': serviceLines.join('\n'),
-    '6': formatCurrency(approval.totalAmount)
-  });
+  const contentSid = env.twilio.whatsappContentSid || null;
 
-  return sendWhatsAppMessage({
-    to: jobCard.customer?.mobileNo,
-    body,
-    contentSid: 'HX09464b05964a13afc5fc48c7cf92bd7c',
-    contentVariables
-  });
+  let messagePayload;
+  if (contentSid) {
+    // Use interactive template with Approve / Reject buttons
+    const contentVariables = JSON.stringify({
+      '1': customerName,
+      '2': vehicleNo,
+      '3': jobCard.jobCardNo,
+      '4': approval.approvalCode,
+      '5': serviceLines.join('\n'),
+      '6': formatCurrency(approval.totalAmount)
+    });
+    messagePayload = {
+      to: jobCard.customer?.mobileNo,
+      body: buildAdditionalWorkApprovalMessage({ jobCard, approval, services, explanation }),
+      contentSid,
+      contentVariables
+    };
+  } else {
+    // Fallback: plain text message with reply instructions
+    messagePayload = {
+      to: jobCard.customer?.mobileNo,
+      body: buildAdditionalWorkApprovalMessage({ jobCard, approval, services, explanation })
+    };
+  }
+
+  const textResult = await sendWhatsAppMessage(messagePayload);
+
+  // Send voice note as a separate media message if available
+  if (resolvedVoiceNoteUrl && typeof resolvedVoiceNoteUrl === 'string' && resolvedVoiceNoteUrl.startsWith('https://')) {
+    try {
+      await sendWhatsAppMessage({
+        to: jobCard.customer?.mobileNo,
+        body: 'Mechanic voice note:',
+        mediaUrl: [resolvedVoiceNoteUrl]
+      });
+    } catch (mediaError) {
+      console.warn('[WhatsApp] Voice note media send failed (message still delivered):', mediaError?.message || mediaError);
+    }
+  }
+
+  return textResult;
 };
 
 const validateTwilioRequest = (req) => {
@@ -131,6 +174,7 @@ module.exports = {
   normalizeIndianWhatsAppNumber,
   normalizeWhatsAppSender,
   sendWhatsAppMessage,
+  sendWhatsAppVoiceNote,
   sendAdditionalWorkApproval,
   validateTwilioRequest
 };

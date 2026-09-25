@@ -39,18 +39,16 @@ const syncJobCardStageTracking = async (tx, jobCardId, oldStatusId, newStatusId,
   }, tx);
 };
 
-const DEPARTMENT_ORDER = ['mechanical', 'body-shop', 'water-wash'];
+const DEPARTMENT_ORDER = ['mechanical', 'body-shop'];
 
 const DEPARTMENT_ALIASES = {
   mechanical: ['mechanical', 'mechanic', 'mechnanic', 'floor'],
-  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'denting'],
-  'water-wash': ['water-wash', 'water_wash', 'water wash', 'wash']
+  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'denting']
 };
 
 const BAY_TYPE_BY_DEPARTMENT = {
   mechanical: 'Mechanical',
-  'body-shop': 'Body Shop',
-  'water-wash': 'Water Wash'
+  'body-shop': 'Body Shop'
 };
 
 const ASSIGNMENT_STATUS_CODES = {
@@ -63,11 +61,6 @@ const ASSIGNMENT_STATUS_CODES = {
     assigned: ['BODY_SHOP_ASSIGNED'],
     inProgress: ['BODY_SHOP_IN_PROGRESS'],
     completed: ['BODY_SHOP_COMPLETED']
-  },
-  'water-wash': {
-    assigned: ['WATER_WASH_ASSIGNED'],
-    inProgress: ['WATER_WASH_IN_PROGRESS'],
-    completed: ['WATER_WASH_COMPLETED']
   }
 };
 
@@ -269,12 +262,6 @@ const getActiveQueueDepartment = (jobCard) => {
     break;
   }
 
-  // If the active department is water-wash, but there's a postponed department,
-  // we must return to the postponed department because water wash is strictly done last.
-  if (activeDepartment === 'water-wash' && firstPostponed) {
-    return firstPostponed;
-  }
-
   return activeDepartment || firstPostponed;
 };
 
@@ -435,7 +422,6 @@ const toQueueResponse = (jobCard, department) => {
   if (currentDeptIndex >= 0) {
     for (let i = currentDeptIndex + 1; i < DEPARTMENT_ORDER.length; i++) {
       const downstreamDept = DEPARTMENT_ORDER[i];
-      if (downstreamDept === 'water-wash') continue;
       const hasServices = (jobCard.services || []).some((s) => getServiceDepartment(s) === downstreamDept);
       if (hasServices) {
         canSkip = true;

@@ -19,10 +19,7 @@ const ROLE_ALIASES = {
   crm_executive: 'crm_team',
   crm_staff: 'crm_team',
   floor: 'floor_supervisor',
-  mechanical_supervisor: 'floor_supervisor',
-  water_wash: 'water_wash_team',
-  water_wash_supervisor: 'water_wash_team',
-  wash: 'water_wash_team'
+  mechanical_supervisor: 'floor_supervisor'
 };
 
 const ROLE_MODULES = {
@@ -34,7 +31,6 @@ const ROLE_MODULES = {
   mechanical: 'floor-supervisor',
   mechanic: 'floor-supervisor',
   body_shop_supervisor: 'body-shop-supervisor',
-  water_wash_team: 'water-wash-team',
   manager: 'manager',
   managing_director: 'managing-director',
   md: 'managing-director'

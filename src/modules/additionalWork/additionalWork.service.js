@@ -2,37 +2,32 @@ const crypto = require('crypto');
 const prisma = require('../../config/db');
 const { STATUS_MODULE_CODES, resolveStatusFromCodes, resolveStatusIdFromCodes } = require('../../common/utils/status.util');
 const { validateTwilioRequest, sendAdditionalWorkApproval } = require('../../providers/whatsapp/whatsapp.service');
+const { createStorageProvider } = require('../../providers/storage/storage.provider');
 
-const DEPARTMENT_ORDER = ['mechanical', 'body-shop', 'water-wash'];
+const storageProvider = createStorageProvider();
+
+const DEPARTMENT_ORDER = ['mechanical', 'body-shop'];
 const DEPARTMENT_ALIASES = {
   mechanical: ['mechanical', 'mechanic', 'mechnanic', 'floor'],
-  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'denting'],
-  'water-wash': ['water-wash', 'water_wash', 'water wash', 'wash']
+  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'denting']
 };
 const ROLE_ALIASES = {
   body_shop: 'body_shop_supervisor',
   bodyshop: 'body_shop_supervisor',
   bodyshop_supervisor: 'body_shop_supervisor',
   floor: 'floor_supervisor',
-  mechanical_supervisor: 'floor_supervisor',
-  water_wash: 'water_wash_team',
-  water_wash_supervisor: 'water_wash_team',
-  wash: 'water_wash_team'
+  mechanical_supervisor: 'floor_supervisor'
 };
 const ROLE_DEPARTMENTS = {
-  floor_supervisor: 'mechanical',
+  floor_supervisor: ['mechanical', 'body-shop'],
   mechanical: 'mechanical',
   mechanic: 'mechanical',
-  body_shop_supervisor: 'body-shop',
-  water_wash_supervisor: 'water-wash',
-  water_wash_team: 'water-wash',
-  water_wash: 'water-wash'
+  body_shop_supervisor: 'body-shop'
 };
 const PRIVILEGED_ROLES = new Set(['admin', 'super_admin', 'manager', 'managing_director']);
 const MODULE_DEPARTMENTS = {
-  'floor-supervisor': 'mechanical',
-  'body-shop-supervisor': 'body-shop',
-  'water-wash-team': 'water-wash'
+  'floor-supervisor': ['mechanical', 'body-shop'],
+  'body-shop-supervisor': 'body-shop'
 };
 const PRIVILEGED_MODULES = new Set(['admin', 'manager', 'managing-director']);
 const APPROVAL_TYPE_ADDITIONAL_WORK = 'ADDITIONAL_WORK';
@@ -47,6 +42,12 @@ END
 IF COL_LENGTH('job_card_approvals', 'mechanic_explanation') IS NULL
 BEGIN
   ALTER TABLE job_card_approvals ADD mechanic_explanation NVARCHAR(MAX) NULL;
+END
+  `,
+  `
+IF COL_LENGTH('job_card_approvals', 'voice_note_url') IS NULL
+BEGIN
+  ALTER TABLE job_card_approvals ADD voice_note_url NVARCHAR(MAX) NULL;
 END
   `,
   `
@@ -148,11 +149,18 @@ const normalizeRoleSlug = (roleSlug) => {
 };
 
 const normalizeDepartment = (value) => {
+  if (!value) return null;
   const normalizedValue = normalizeText(value);
+  if (!normalizedValue) return null;
 
-  return DEPARTMENT_ORDER.find((department) => {
-    return DEPARTMENT_ALIASES[department].some((alias) => normalizeText(alias) === normalizedValue);
+  const found = DEPARTMENT_ORDER.find((department) => {
+    return (DEPARTMENT_ALIASES[department] || []).some((alias) => {
+      const normAlias = normalizeText(alias);
+      return normalizedValue === normAlias || normalizedValue.includes(normAlias) || normAlias.includes(normalizedValue);
+    });
   });
+
+  return found || 'mechanical';
 };
 
 const getAllowedDepartments = (user) => {
@@ -164,7 +172,14 @@ const getAllowedDepartments = (user) => {
   if (Array.isArray(user.modules)) {
     for (const mod of user.modules) {
       if (PRIVILEGED_MODULES.has(mod)) isPrivileged = true;
-      if (MODULE_DEPARTMENTS[mod]) allowed.add(MODULE_DEPARTMENTS[mod]);
+      const dept = MODULE_DEPARTMENTS[mod];
+      if (dept) {
+        if (Array.isArray(dept)) {
+          dept.forEach((d) => allowed.add(d));
+        } else {
+          allowed.add(dept);
+        }
+      }
     }
   }
 
@@ -175,36 +190,52 @@ const getAllowedDepartments = (user) => {
 
   const deptFromRole = ROLE_DEPARTMENTS[roleSlug];
   if (deptFromRole) {
-    allowed.add(deptFromRole);
+    if (Array.isArray(deptFromRole)) {
+      deptFromRole.forEach((d) => allowed.add(d));
+    } else {
+      allowed.add(deptFromRole);
+    }
   }
 
   if (isPrivileged) return ['all'];
   return Array.from(allowed);
 };
 
-const getDepartmentForUser = (user, requestedDepartment) => {
+const getDepartmentsForUser = (user, requestedDepartment) => {
   const allowed = getAllowedDepartments(user);
+  const normalizedReq = normalizeDepartment(requestedDepartment);
 
-  if (allowed.includes('all')) {
-    const department = normalizeDepartment(requestedDepartment);
-    if (department) {
-      return department;
+  if (normalizedReq) {
+    if (allowed.includes('all') || allowed.includes(normalizedReq)) {
+      return [normalizedReq];
     }
-  } else if (allowed.length > 0) {
-    const reqDept = normalizeDepartment(requestedDepartment);
-    if (reqDept) {
-      if (allowed.includes(reqDept)) return reqDept;
-    } else {
-      if (allowed.length === 1) return allowed[0];
-    }
+    throw createHttpError(403, 'Unauthorized to view additional work for this department');
   }
 
-  throw createHttpError(400, 'Valid additional work department is required');
+  if (allowed.includes('all')) {
+    return [];
+  }
+
+  return allowed;
+};
+
+const getDepartmentForUser = (user, requestedDepartment) => {
+  const allowed = getDepartmentsForUser(user, requestedDepartment);
+  if (allowed.length === 1) {
+    return allowed[0];
+  }
+  if (allowed.length === 0) {
+    const norm = normalizeDepartment(requestedDepartment);
+    return norm || 'mechanical';
+  }
+  return allowed[0];
 };
 
 const getServiceDepartment = (service) => {
-  const category = service && service.serviceItem && service.serviceItem.category;
-  return normalizeDepartment(category && (category.slug || category.name));
+  if (!service) return 'mechanical';
+  const category = service.serviceItem && service.serviceItem.category;
+  const nameOrSlug = category ? (category.slug || category.name) : (service.serviceName || service.name);
+  return normalizeDepartment(nameOrSlug) || 'mechanical';
 };
 
 const toStatusResource = (status) => status
@@ -252,7 +283,8 @@ const toApprovalResource = (approval) => approval
     totalAmount: Number(approval.totalAmount),
     whatsappMessageId: approval.whatsappMessageId,
     customerResponse: approval.customerResponse,
-    mechanicExplanation: approval.mechanicExplanation || null,
+    mechanicExplanation: approval.mechanicExplanation || approval.mechanic_explanation || null,
+    voiceNoteUrl: approval.voiceNoteUrl || approval.voice_note_url || null,
     sentAt: approval.sentAt,
     respondedAt: approval.respondedAt,
     status: toStatusResource(approval.status),
@@ -286,7 +318,8 @@ const toAdditionalWorkListResource = (approval) => {
       ? [approval.jobCard.vehicle.brand && approval.jobCard.vehicle.brand.name, approval.jobCard.vehicle.model].filter(Boolean).join(' ')
       : null,
     locationId: approval.jobCard ? approval.jobCard.locationId : null,
-    mechanicExplanation: approval.mechanicExplanation || null,
+    mechanicExplanation: approval.mechanicExplanation || approval.mechanic_explanation || null,
+    voiceNoteUrl: approval.voiceNoteUrl || approval.voice_note_url || null,
     description: approval.mechanicExplanation || services.map((service) => service.serviceName).join(', '),
     linkedServiceNames,
     linkedServiceLabel: linkedServiceNames.length ? linkedServiceNames.join(', ') : null,
@@ -469,16 +502,19 @@ const getLatestPendingAdditionalApproval = (tx, jobCardId) => {
 const listRequests = async (query, user) => {
   await ensureAdditionalWorkSchema();
 
-  const department = getDepartmentForUser(user, query.department || query.category);
+  const requestedDept = query.department || query.category;
+  const normalizedReqDept = requestedDept ? normalizeDepartment(requestedDept) : null;
+  const targetDepartments = getDepartmentsForUser(user, requestedDept);
+
   const page = parsePositiveIntWithFallback(query.page, 1);
   const limit = parsePositiveIntWithFallback(query.limit, 20);
   const search = String(query.search || '').trim();
   const statusCode = normalizeStatusFilter(query.status);
-  const departmentCategoryFilter = {
-    OR: DEPARTMENT_ALIASES[department].map((alias) => ({
-      slug: normalizeText(alias)
-    }))
-  };
+
+  // Apply department filter only if caller specifically requested a single department
+  // or user is strictly restricted to one department (e.g. Body Shop Supervisor).
+  const isSingleDeptRestricted = targetDepartments.length === 1 && !normalizedReqDept;
+  const filterDept = normalizedReqDept || (isSingleDeptRestricted ? targetDepartments[0] : null);
 
   const where = {
     approvalType: APPROVAL_TYPE_ADDITIONAL_WORK,
@@ -502,10 +538,7 @@ const listRequests = async (query, user) => {
       : {}),
     services: {
       some: {
-        isAdditional: true,
-        serviceItem: {
-          category: departmentCategoryFilter
-        }
+        isAdditional: true
       }
     },
     ...(search
@@ -546,10 +579,7 @@ const listRequests = async (query, user) => {
         },
         services: {
           where: {
-            isAdditional: true,
-            serviceItem: {
-              category: departmentCategoryFilter
-            }
+            isAdditional: true
           },
           include: {
             serviceItem: {
@@ -581,14 +611,41 @@ const listRequests = async (query, user) => {
     prisma.jobCardApproval.count({ where })
   ]);
 
+  let filteredRequests = requests;
+  if (filterDept) {
+    filteredRequests = requests.filter((approval) => {
+      const services = approval.services || [];
+      return services.some((service) => getServiceDepartment(service) === filterDept);
+    });
+  }
+
+  const approvalIds = filteredRequests.map((r) => r.id);
+  if (approvalIds.length > 0) {
+    try {
+      const rawDetails = await prisma.$queryRawUnsafe(
+        `SELECT id, mechanic_explanation, voice_note_url FROM job_card_approvals WHERE id IN (${approvalIds.join(',')})`
+      );
+      const rawMap = new Map(rawDetails.map((r) => [r.id, r]));
+      for (const req of filteredRequests) {
+        const raw = rawMap.get(req.id);
+        if (raw) {
+          req.mechanicExplanation = req.mechanicExplanation || raw.mechanic_explanation;
+          req.voiceNoteUrl = raw.voice_note_url || null;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch raw approval details:', e);
+    }
+  }
+
   return {
-    department,
-    requests: requests.map(toAdditionalWorkListResource),
+    department: filterDept || 'all',
+    requests: filteredRequests.map(toAdditionalWorkListResource),
     meta: {
       page,
       limit,
-      total,
-      totalPages: Math.ceil(total / limit)
+      total: filterDept ? filteredRequests.length : total,
+      totalPages: Math.ceil((filterDept ? filteredRequests.length : total) / limit)
     }
   };
 };
@@ -615,15 +672,12 @@ const buildJobCardResource = (jobCard) => ({
     .join(', ') || null
 });
 
-const listAvailableServiceItems = (tx, department) => {
-  return tx.serviceItem.findMany({
+const listAvailableServiceItems = async (tx, department) => {
+  const allItems = await tx.serviceItem.findMany({
     where: {
       isActive: true,
       category: {
-        isActive: true,
-        OR: DEPARTMENT_ALIASES[department].map((alias) => ({
-          slug: normalizeText(alias)
-        }))
+        isActive: true
       }
     },
     include: {
@@ -631,6 +685,17 @@ const listAvailableServiceItems = (tx, department) => {
     },
     orderBy: { name: 'asc' }
   });
+
+  if (!department || department === 'all') {
+    return allItems;
+  }
+
+  const deptItems = allItems.filter((item) => {
+    const catName = item.category ? (item.category.slug || item.category.name) : item.name;
+    return normalizeDepartment(catName) === department;
+  });
+
+  return deptItems.length > 0 ? deptItems : allItems;
 };
 
 const getContext = async (jobCardIdentifier, query, user) => {
@@ -655,13 +720,15 @@ const getContext = async (jobCardIdentifier, query, user) => {
     throw createHttpError(404, 'Job card not found');
   }
 
+  const parentCandidates = (jobCard.services || []).filter((service) => !service.isAdditional);
+  const deptParentServices = parentCandidates.filter((service) => getServiceDepartment(service) === department);
+  const eligibleParentServices = deptParentServices.length > 0 ? deptParentServices : parentCandidates;
+
   return {
     department,
     jobCard: buildJobCardResource(jobCard),
     currentServices: jobCard.services.map(toServiceResource),
-    eligibleParentServices: jobCard.services
-      .filter((service) => getServiceDepartment(service) === department && !service.isAdditional)
-      .map(toServiceResource),
+    eligibleParentServices: eligibleParentServices.map(toServiceResource),
     availableServices: serviceItems.map(toServiceItemResource),
     pendingApproval: toApprovalResource(pendingApproval)
   };
@@ -691,6 +758,15 @@ const createRequest = async (jobCardIdentifier, payload, user) => {
     throw createHttpError(400, 'Mechanic explanation is required');
   }
 
+  let voiceNoteUrl = payload.voiceNoteUrl || payload.audioUrl || payload.voiceUrl || (Array.isArray(payload.mediaUrl) ? payload.mediaUrl[0] : payload.mediaUrl) || null;
+  if (voiceNoteUrl && typeof voiceNoteUrl === 'string' && voiceNoteUrl.startsWith('data:') && storageProvider && typeof storageProvider.uploadDataUrl === 'function') {
+    try {
+      voiceNoteUrl = await storageProvider.uploadDataUrl(voiceNoteUrl, 'voice-notes');
+    } catch (uploadErr) {
+      console.error('Failed to upload Base64 voice note to Azure Blob Storage:', uploadErr);
+    }
+  }
+
   const department = getDepartmentForUser(user, payload.department || payload.category);
   const parentJobCardServiceId = parsePositiveInt(payload.parentJobCardServiceId, 'parentJobCardServiceId');
   const selections = normalizeServiceSelections(payload.serviceItems || payload.services);
@@ -705,10 +781,6 @@ const createRequest = async (jobCardIdentifier, payload, user) => {
     const parentService = jobCard.services.find((service) => service.id === parentJobCardServiceId);
     if (!parentService) {
       throw createHttpError(400, 'Parent job card service is invalid');
-    }
-
-    if (getServiceDepartment(parentService) !== department) {
-      throw createHttpError(400, 'Parent service does not belong to this department');
     }
 
     const serviceItems = await tx.serviceItem.findMany({
@@ -729,12 +801,6 @@ const createRequest = async (jobCardIdentifier, payload, user) => {
 
     if (serviceItems.length !== selections.length) {
       throw createHttpError(400, 'One or more selected service items are invalid or inactive');
-    }
-
-    for (const serviceItem of serviceItems) {
-      if (normalizeDepartment(serviceItem.category && (serviceItem.category.slug || serviceItem.category.name)) !== department) {
-        throw createHttpError(400, 'One or more selected service items are outside this department');
-      }
     }
 
     const pendingApprovalStatus = await resolveRequiredStatus(tx, STATUS_MODULE_CODES.APPROVAL_STATUS, ['PENDING'], 'Pending approval');
@@ -761,7 +827,8 @@ const createRequest = async (jobCardIdentifier, payload, user) => {
 
     await tx.$executeRaw`
       UPDATE job_card_approvals
-      SET mechanic_explanation = ${explanation}
+      SET mechanic_explanation = ${explanation},
+          voice_note_url = ${voiceNoteUrl || null}
       WHERE id = ${approval.id}
     `;
 
@@ -831,27 +898,32 @@ const createRequest = async (jobCardIdentifier, payload, user) => {
       jobCard,
       approval: updatedApproval,
       services: createdServices,
-      explanation
+      explanation,
+      voiceNoteUrl
     };
   }, { timeout: 30000 });
 
   try {
+    const customerMobile = result.jobCard.customer?.mobileNo || result.jobCard.customer?.mobile || '';
     const jobCardForMsg = {
       ...result.jobCard,
       customer: {
         ...(result.jobCard.customer || {}),
-        mobileNo: '8825971339'
+        mobileNo: customerMobile
       }
     };
 
-    await sendAdditionalWorkApproval({
+    const twilioRes = await sendAdditionalWorkApproval({
       jobCard: jobCardForMsg,
       approval: result.approval,
       services: result.services,
-      explanation: result.explanation
+      explanation: result.explanation,
+      voiceNoteUrl: result.voiceNoteUrl
     });
+    const maskedMobile = customerMobile ? `${customerMobile.slice(0, 3)}****${customerMobile.slice(-4)}` : 'N/A';
+    console.log('[WhatsApp Success] Sent message to:', maskedMobile, '| SID:', twilioRes?.sid || 'N/A');
   } catch (error) {
-    console.error('Failed to send Twilio WhatsApp message:', error);
+    console.error('[WhatsApp Error] Failed to send Twilio WhatsApp message:', error?.message || error);
   }
 
   return {

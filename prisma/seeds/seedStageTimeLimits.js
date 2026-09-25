@@ -48,13 +48,6 @@ const limitsData = [
     notifyRoleSlug: 'body_shop_supervisor'
   },
   {
-    stageCode: 'WATER_WASH_ASSIGNMENT_PENDING',
-    moduleCode: 'job-card',
-    statusCode: 'WATER_WASH_ASSIGNMENT_PENDING',
-    allowedMinutes: 20,
-    notifyRoleSlug: 'water_wash_supervisor'
-  },
-  {
     stageCode: 'MECHANICAL_WORK',
     moduleCode: 'job-card',
     statusCode: 'MECHANICAL_IN_PROGRESS',
@@ -65,13 +58,6 @@ const limitsData = [
     stageCode: 'BODY_SHOP',
     moduleCode: 'job-card',
     statusCode: 'BODY_SHOP_IN_PROGRESS',
-    allowedMinutes: 2,
-    notifyRoleSlug: 'floor_supervisor'
-  },
-  {
-    stageCode: 'WATER_WASH',
-    moduleCode: 'job-card',
-    statusCode: 'WATER_WASH_IN_PROGRESS',
     allowedMinutes: 2,
     notifyRoleSlug: 'floor_supervisor'
   },
@@ -137,7 +123,7 @@ async function seedStageTimeLimits(prisma) {
       allowedMinutes: limit.allowedMinutes,
       isActive: true
     };
-    
+
     const recipientsUpdate = notifyRoleId ? {
       deleteMany: {},
       create: [{ roleId: notifyRoleId }]
@@ -161,11 +147,11 @@ async function seedStageTimeLimits(prisma) {
         }
       });
     } else {
-      await prisma.stageTimeLimit.create({ 
+      await prisma.stageTimeLimit.create({
         data: {
           ...data,
           recipients: recipientsCreate
-        } 
+        }
       });
     }
   }

@@ -29,20 +29,6 @@ const listBodyShopQueue = async (req, res, next) => {
   }
 };
 
-const listWaterWashQueue = async (req, res, next) => {
-  try {
-    const result = await queueService.listQueue('water-wash', req.query, req.user);
-
-    return apiResponse(res, {
-      message: 'Water wash queue fetched successfully',
-      data: result.queue,
-      meta: result.meta
-    });
-  } catch (error) {
-    return next(error);
-  }
-};
-
 const assignWork = async (req, res, next) => {
   try {
     const data = await queueService.assignWork(req.params.jobCardId, req.body, req.user);
@@ -88,7 +74,6 @@ const updateAssignmentStatus = async (req, res, next) => {
 module.exports = {
   listMechanicalQueue,
   listBodyShopQueue,
-  listWaterWashQueue,
   assignWork,
   reassignWork,
   updateAssignmentStatus

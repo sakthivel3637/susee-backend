@@ -73,19 +73,6 @@ const getBodyShopDashboard = async (req, res, next) => {
   }
 };
 
-const getWaterWashDashboard = async (req, res, next) => {
-  try {
-    const locationId = req.query.locationId ? parseInt(req.query.locationId) : (req.user?.locationId || null);
-    const dashboard = await dashboardService.getWaterWashDashboard(locationId);
-
-    return apiResponse(res, {
-      message: 'Water wash dashboard fetched successfully',
-      data: dashboard
-    });
-  } catch (error) {
-    return next(error);
-  }
-};
 
 const getTvKioskDashboard = async (req, res, next) => {
   try {
@@ -107,6 +94,5 @@ module.exports = {
   getFloorSupervisorDashboard,
   getManagerDashboard,
   getBodyShopDashboard,
-  getWaterWashDashboard,
   getTvKioskDashboard
 };

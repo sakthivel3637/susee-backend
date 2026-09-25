@@ -4,8 +4,7 @@ module.exports = {
     'manager',
     'managing-director',
     'floor-supervisor',
-    'body-shop-supervisor',
-    'water-wash-team',
+    'body-shop-supervisor'
   ],
   mobile: [
     'gate-security',
