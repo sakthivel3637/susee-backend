@@ -254,6 +254,7 @@ const listBays = async (query, user) => {
 const getBayDropdown = async (query = {}) => {
   const locationId = parsePositiveInt(query.locationId, undefined);
   const bayType = toTrimmedString(query.bayType || query.type);
+  const search = toTrimmedString(query.search);
   const where = { isActive: true };
 
   if (locationId) {
@@ -262,6 +263,13 @@ const getBayDropdown = async (query = {}) => {
 
   if (bayType) {
     where.bayType = bayType;
+  }
+
+  if (search) {
+    where.OR = [
+      { bayName: { contains: search } },
+      { bayCode: { contains: search } }
+    ];
   }
 
   const bays = await prisma.bay.findMany({

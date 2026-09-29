@@ -32,8 +32,8 @@ const LOCATION_REQUIRED_ROLE_SLUGS = new Set([
   'manager'
 ]);
 const ASSIGNABLE_MODULE_BY_CATEGORY = {
-  mechanical: 'floor-supervisor',
-  'body-shop': ['floor-supervisor', 'body-shop-supervisor']
+  mechanical: ['mechanical', 'mechanic'],
+  'body-shop': ['body-shop-mechanic', 'body-shop', 'bodyshop']
 };
 
 const createHttpError = (statusCode, message) => {
@@ -574,13 +574,29 @@ const listMechanicDropdown = async (query, actor) => {
   const locationId = actor && actor.locationId ? Number(actor.locationId) : requestedLocationId;
   const category = normalizeAssignmentCategory(query.category);
   const targetModule = ASSIGNABLE_MODULE_BY_CATEGORY[category] || ASSIGNABLE_MODULE_BY_CATEGORY.mechanical;
+  const search = query.search ? String(query.search).trim() : undefined;
 
   const users = await prisma.user.findMany({
     where: {
       isActive: true,
       ...(locationId ? { locationId } : {}),
+      ...(search ? {
+        OR: [
+          { fullName: { contains: search } },
+          { employeeCode: { contains: search } },
+          { mobileNo: { contains: search } }
+        ]
+      } : {}),
       role: {
         isActive: true,
+        NOT: {
+          OR: [
+            { slug: { contains: 'supervisor' } },
+            { slug: { contains: 'manager' } },
+            { slug: { contains: 'admin' } },
+            { slug: { contains: 'director' } }
+          ]
+        },
         rolePermissions: {
           some: {
             canRead: true,

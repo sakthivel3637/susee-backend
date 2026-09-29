@@ -30,13 +30,19 @@ const MENU_SEED_DATA = [
       { name: 'Notifications', path: '/notifications', icon: 'Bell' }
     ]
   },
+
   {
-    module: 'body-shop-supervisor',
+    module: 'mechanic',
     menus: [
-      { name: 'Body Shop Dashboard', path: '/body-shop-dashboard', icon: 'LayoutDashboard' },
-      // { name: 'Body Shop Queue', path: '/body-shop-queue', icon: 'Paintbrush' },
-      { name: 'Assign Mechanic', path: '/body-shop-assign-mechanic', icon: 'User' },
-      { name: 'Additional Work', path: '/body-shop-additional-work', icon: 'AlertCircle' },
+      { name: 'Mechanic Dashboard', path: '/mechanic-dashboard', icon: 'LayoutDashboard' },
+      { name: 'Job Cards', path: '/job-cards', icon: 'ClipboardList' },
+      { name: 'Notifications', path: '/notifications', icon: 'Bell' }
+    ]
+  },
+  {
+    module: 'body-shop-mechanic',
+    menus: [
+      { name: 'Body Shop Dashboard', path: '/body-shop-mechanic-dashboard', icon: 'LayoutDashboard' },
       { name: 'Job Cards', path: '/job-cards', icon: 'ClipboardList' },
       { name: 'Notifications', path: '/notifications', icon: 'Bell' }
     ]
@@ -100,16 +106,20 @@ const MENU_SEED_DATA = [
 // can remove later
 const REMOVED_MENU_PATHS = [
   { module: 'floor-supervisor', path: '/work-status' },
-  { module: 'body-shop-supervisor', path: '/body-shop-work-status' },
-  { module: 'body-shop-supervisor', path: '/body-shop-queue' },
   { module: 'admin', path: '/master-bays' },
   { module: 'managing-director', path: '/master-bays' },
   { module: 'managing-director', path: '/audit-logs' },
-  { module: 'water-wash-team', path: '/vehicles' },
+
   { module: 'admin', path: '/master-categories' }
 ];
 
 const seedMenus = async (prisma) => {
+  // Deactivate all legacy body-shop-supervisor menus
+  await prisma.menu.updateMany({
+    where: { module: 'body-shop-supervisor' },
+    data: { isActive: false }
+  });
+
   for (const removedMenu of REMOVED_MENU_PATHS) {
     await prisma.menu.updateMany({
       where: removedMenu,

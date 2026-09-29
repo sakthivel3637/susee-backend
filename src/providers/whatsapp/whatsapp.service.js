@@ -92,7 +92,7 @@ const buildAdditionalWorkApprovalMessage = ({ jobCard, approval, services, expla
     ...serviceLines,
     '',
     `Total: ${formatCurrency(approval.totalAmount)}`,
-    explanation ? `Mechanic explanation: ${explanation}` : null,
+    explanation ? `Mechanic Note: ${explanation}` : null,
     voiceNoteUrl ? `Voice Note: ${voiceNoteUrl}` : null,
     '',
     `Reply YES ${approval.approvalCode} to approve or NO ${approval.approvalCode} to reject.`
@@ -113,13 +113,19 @@ const sendAdditionalWorkApproval = async ({ jobCard, approval, services, explana
   let messagePayload;
   if (contentSid) {
     // Use interactive template with Approve / Reject buttons
+    const servicesText = serviceLines.join('\n');
+    const workDetailsText = explanation
+      ? `${servicesText}\n\nMechanic Note: ${explanation}`
+      : servicesText;
+
     const contentVariables = JSON.stringify({
       '1': customerName,
       '2': vehicleNo,
       '3': jobCard.jobCardNo,
       '4': approval.approvalCode,
-      '5': serviceLines.join('\n'),
-      '6': formatCurrency(approval.totalAmount)
+      '5': workDetailsText,
+      '6': formatCurrency(approval.totalAmount),
+      '7': explanation || ''
     });
     messagePayload = {
       to: jobCard.customer?.mobileNo,

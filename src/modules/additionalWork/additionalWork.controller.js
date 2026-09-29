@@ -12,6 +12,7 @@ const getContext = async (req, res, next) => {
       data
     });
   } catch (error) {
+    console.error('[getContext Error]:', error);
     return next(error);
   }
 };
