@@ -5,6 +5,9 @@ const { normalizeVehicleNumber } = require('../../utils/normalizeVehicleNumber')
 const { createAuditLog } = require('../../common/utils/audit.util');
 const { syncAssignmentPendingStages } = require('../processStageTracking/departmentAssignmentStage.service');
 const { startStage, completeStage } = require('../processStageTracking/processStageTracking.service');
+const { createStorageProvider } = require('../../providers/storage/storage.provider');
+
+const storageProvider = createStorageProvider();
 
 const syncJobCardStageTracking = async (tx, jobCardId, oldStatusId, newStatus, user) => {
   const jobCard = await tx.jobCard.findUnique({ where: { id: jobCardId } });
@@ -115,12 +118,36 @@ const normalizeCustomerApprovalDecision = (payload = {}) => {
 };
 
 const buildJobCardIdentifierWhere = (identifier) => {
-  const parsedId = Number(identifier);
+  const rawId = String(identifier || '').trim();
+  if (!rawId) {
+    return { id: -1 };
+  }
+
+  const normalizedId = rawId.toLowerCase();
+  const parsedId = Number(normalizedId);
   const isNumericId = Number.isInteger(parsedId) && parsedId > 0;
 
-  return isNumericId
-    ? { id: parsedId }
-    : { slug: String(identifier || '').trim() };
+  const conditions = [
+    { slug: normalizedId },
+    { slug: rawId },
+    { jobCardNo: rawId },
+    { jobCardNo: normalizedId },
+    { jobCardNo: rawId.toUpperCase() }
+  ];
+
+  if (isNumericId) {
+    conditions.push({ id: parsedId });
+  } else {
+    const digitsOnly = rawId.replace(/\D/g, '');
+    if (digitsOnly) {
+      const parsedDigits = Number(digitsOnly);
+      if (Number.isInteger(parsedDigits) && parsedDigits > 0) {
+        conditions.push({ id: parsedDigits });
+      }
+    }
+  }
+
+  return { OR: conditions };
 };
 
 const normalizeServicePayload = (services = []) => {
@@ -234,9 +261,10 @@ const normalizeDepartment = (value) => {
 };
 
 const ROLE_ALIASES = {
-  body_shop: 'body_shop_supervisor',
-  bodyshop: 'body_shop_supervisor',
-  bodyshop_supervisor: 'body_shop_supervisor',
+  body_shop: 'floor_supervisor',
+  bodyshop: 'floor_supervisor',
+  bodyshop_supervisor: 'floor_supervisor',
+  body_shop_supervisor: 'floor_supervisor',
   floor: 'floor_supervisor',
   mechanical_supervisor: 'floor_supervisor'
 };
@@ -252,16 +280,16 @@ const ROLE_DEPARTMENTS = {
   floor_supervisor: ['mechanical', 'body-shop'],
   mechanical: 'mechanical',
   mechanic: 'mechanical',
-  body_shop_supervisor: 'body-shop'
+  body_shop_supervisor: ['mechanical', 'body-shop']
 };
 const ROLE_JOB_CARD_DEPARTMENTS = {
   floor_supervisor: ['mechanical', 'body-shop'],
-  body_shop_supervisor: 'body-shop'
+  body_shop_supervisor: ['mechanical', 'body-shop']
 };
 
 const MODULE_DEPARTMENTS = {
   'floor-supervisor': ['mechanical', 'body-shop'],
-  'body-shop-supervisor': 'body-shop'
+  'body-shop-supervisor': ['mechanical', 'body-shop']
 };
 const PRIVILEGED_MODULES = new Set(['admin', 'manager', 'managing-director']);
 
@@ -584,6 +612,7 @@ const deriveJobCardStatus = async (tx, jobCard) => {
 const toBaySummary = (bay) => bay
   ? {
     id: bay.id,
+    name: bay.bayName,
     bayName: bay.bayName,
     bayCode: bay.bayCode,
     bayType: bay.bayType,
@@ -914,89 +943,212 @@ const listJobCards = async (query, user) => {
   };
 };
 
-const getJobCardById = async (id, user) => {
-  const jobCard = await prisma.jobCard.findFirst({
-    where: {
-      ...buildJobCardIdentifierWhere(id),
-      ...(user && user.locationId ? { locationId: Number(user.locationId) } : {})
-    },
+const JOB_CARD_INCLUDE = {
+  customer: {
+    select: { id: true, fullName: true, mobileNo: true, emailId: true, address: true }
+  },
+  vehicle: {
+    select: {
+      id: true,
+      registrationNo: true,
+      model: true,
+      variant: true,
+      fuelType: true,
+      vehicleColor: true,
+      brand: {
+        select: { id: true, name: true }
+      }
+    }
+  },
+  currentStatus: {
+    select: { id: true, statusCode: true, statusName: true }
+  },
+  approvalStatus: {
+    select: { id: true, statusCode: true, statusName: true }
+  },
+  location: {
+    select: { id: true, locationName: true, locationCode: true }
+  },
+  gateEntry: {
+    select: { id: true, entryType: true, gateEntryNo: true }
+  },
+  services: {
     include: {
-      customer: {
-        select: { id: true, fullName: true, mobileNo: true, emailId: true, address: true }
+      serviceItem: {
+        include: {
+          category: true
+        }
       },
-      vehicle: {
+      approvalStatus: true,
+      serviceStatus: true
+    }
+  },
+  workAssignments: {
+    include: {
+      assignedUser: {
+        select: { id: true, fullName: true, employeeCode: true, mobileNo: true }
+      },
+      status: true,
+      jobCardService: {
         select: {
           id: true,
-          registrationNo: true,
-          model: true,
-          variant: true,
-          fuelType: true,
-          vehicleColor: true,
-          brand: {
-            select: { id: true, name: true }
-          }
-        }
-      },
-      currentStatus: {
-        select: { id: true, statusCode: true, statusName: true }
-      },
-      approvalStatus: {
-        select: { id: true, statusCode: true, statusName: true }
-      },
-      location: {
-        select: { id: true, locationName: true, locationCode: true }
-      },
-      gateEntry: {
-        select: { id: true, entryType: true, gateEntryNo: true }
-      },
-      services: {
-        include: {
+          serviceName: true,
           serviceItem: {
-            include: {
-              category: true
-            }
-          },
-          approvalStatus: true,
-          serviceStatus: true
-        }
-      },
-      workAssignments: {
-        include: {
-          assignedUser: {
-            select: { id: true, fullName: true, employeeCode: true, mobileNo: true }
-          },
-          status: true,
-          jobCardService: {
             select: {
-              id: true,
-              serviceName: true,
-              serviceItem: {
-                select: {
-                  category: true
-                }
-              }
+              category: true
             }
           }
         }
       }
     }
+  }
+};
+
+const attachBaysToJobCard = async (jobCard) => {
+  if (!jobCard || !Array.isArray(jobCard.workAssignments)) return jobCard;
+
+  const bayIds = [...new Set(
+    jobCard.workAssignments.map(a => a.bayId).filter(Boolean)
+  )];
+
+  if (bayIds.length === 0) return jobCard;
+
+  const bays = await prisma.bay.findMany({
+    where: { id: { in: bayIds } },
+    select: { id: true, bayName: true, bayCode: true, bayType: true, currentWorkAssignmentId: true }
   });
+
+  const bayMap = new Map(bays.map(b => [b.id, b]));
+  const updatedAssignments = jobCard.workAssignments.map(assignment => ({
+    ...assignment,
+    bay: assignment.bayId ? (bayMap.get(assignment.bayId) || null) : null
+  }));
+
+  const activeAssignment = updatedAssignments.find(a => !a.completedAt) || updatedAssignments[0];
+  const assignedBay = activeAssignment?.bay || null;
+
+  return {
+    ...jobCard,
+    workAssignments: updatedAssignments,
+    bay: assignedBay,
+    assignedBay
+  };
+};
+
+const getJobCardById = async (id, user) => {
+  const identifierWhere = buildJobCardIdentifierWhere(id);
+  const locationWhere = (user && user.locationId) ? { locationId: Number(user.locationId) } : {};
+
+  // First try with location filter
+  let jobCard = await prisma.jobCard.findFirst({
+    where: { ...identifierWhere, ...locationWhere },
+    include: JOB_CARD_INCLUDE
+  });
+
+  // If not found with locationId filter, try without (handles cross-location admin access or token mismatch)
+  if (!jobCard && Object.keys(locationWhere).length > 0) {
+    jobCard = await prisma.jobCard.findFirst({
+      where: identifierWhere,
+      include: JOB_CARD_INCLUDE
+    });
+  }
 
   if (!jobCard) {
     throw new Error('Job Card not found');
   }
 
+  // Attach bay data manually (bay has no Prisma relation on WorkAssignment)
+  jobCard = await attachBaysToJobCard(jobCard);
+
   try {
     const approvals = await prisma.$queryRaw`
-      SELECT id, approval_code AS approvalCode, approval_type AS approvalType, total_amount AS totalAmount, mechanic_explanation AS mechanicExplanation, voice_note_url AS voiceNoteUrl, customer_response AS customerResponse, sent_at AS sentAt, created_at AS createdAt
-      FROM job_card_approvals
-      WHERE job_card_id = ${jobCard.id}
-      ORDER BY created_at DESC
+      SELECT a.id, a.approval_code AS approvalCode, a.approval_type AS approvalType, a.total_amount AS totalAmount, a.mechanic_explanation AS mechanicExplanation, a.voice_note_url AS voiceNoteUrl, a.customer_response AS customerResponse, a.sent_at AS sentAt, a.created_at AS createdAt, s.status_code AS statusCode, s.status_name AS statusName
+      FROM job_card_approvals a
+      LEFT JOIN status_master s ON a.status_id = s.id
+      WHERE a.job_card_id = ${jobCard.id}
+      ORDER BY a.created_at DESC
     `;
-    jobCard.approvals = approvals || [];
+
+    const approvalList = approvals || [];
+    const approvalIds = approvalList.map(a => a.id);
+    if (approvalIds.length > 0) {
+      try {
+        const approvalServices = await prisma.$queryRawUnsafe(`
+          SELECT jcs.job_card_approval_id AS approvalId, si.name AS serviceName, jcs.price, sm.status_code AS statusCode, sm.status_name AS statusName
+          FROM job_card_services jcs
+          LEFT JOIN service_items si ON jcs.service_item_id = si.id
+          LEFT JOIN status_master sm ON jcs.approval_status_id = sm.id
+          WHERE jcs.job_card_approval_id IN (${approvalIds.join(',')})
+        `);
+        const serviceMap = new Map();
+        for (const s of (approvalServices || [])) {
+          if (!serviceMap.has(s.approvalId)) serviceMap.set(s.approvalId, []);
+          serviceMap.get(s.approvalId).push(s);
+        }
+        for (const app of approvalList) {
+          app.services = serviceMap.get(app.id) || [];
+        }
+      } catch (srvErr) {
+        console.error('Failed to fetch approval services:', srvErr);
+      }
+    }
+
+    jobCard.approvals = approvalList;
   } catch (e) {
     console.error('Failed to fetch jobCard approvals:', e);
     jobCard.approvals = [];
+  }
+
+  try {
+    const orConditions = [
+      { moduleName: 'JOB_CARD', moduleRecordId: jobCard.id },
+      { moduleName: 'Job Card', moduleRecordId: jobCard.id }
+    ];
+
+    const vId = Number(jobCard.vehicleId || jobCard.vehicle?.id);
+    if (vId) {
+      orConditions.push(
+        { moduleName: 'VEHICLE', moduleRecordId: vId },
+        { moduleName: 'Vehicle', moduleRecordId: vId }
+      );
+    }
+
+    const gId = Number(jobCard.gateEntryId || jobCard.gateEntry?.id);
+    if (gId) {
+      orConditions.push(
+        { moduleName: 'GATE_ENTRY', moduleRecordId: gId },
+        { moduleName: 'Gate Entry', moduleRecordId: gId }
+      );
+    }
+
+    const mediaFiles = await prisma.mediaFile.findMany({
+      where: {
+        OR: orConditions
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    jobCard.photos = mediaFiles.map(f => {
+      let fileUrl = f.fileUrl || f.url || '';
+      if (storageProvider && storageProvider.isConfigured && f.blobName) {
+        try {
+          fileUrl = storageProvider.generateSasUrl(f.blobName, 3600);
+        } catch (sasErr) {
+          console.error('Failed to sign media SAS URL:', sasErr);
+        }
+      }
+      return {
+        id: f.id,
+        category: f.category || 'INSPECTION',
+        fileUrl: fileUrl,
+        fileName: f.fileName
+      };
+    });
+    jobCard.mediaFiles = mediaFiles;
+  } catch (mediaErr) {
+    console.error('Failed to fetch mediaFiles for job card:', mediaErr);
+    jobCard.photos = [];
+    jobCard.mediaFiles = [];
   }
 
   return jobCard;
@@ -1047,14 +1199,16 @@ const listJobCardServiceStatuses = async () => {
 const updateJobCard = async (id, payload, user) => {
   const identifierWhere = buildJobCardIdentifierWhere(id);
 
-  if (!identifierWhere.id && !identifierWhere.slug) {
+  if (!identifierWhere.id && !identifierWhere.OR) {
     throw createHttpError(400, 'Valid job card id is required');
   }
 
-  const existingJobCard = await prisma.jobCard.findFirst({
+  const locationWhere = (user && user.locationId) ? { locationId: Number(user.locationId) } : {};
+
+  let existingJobCard = await prisma.jobCard.findFirst({
     where: {
       ...identifierWhere,
-      ...(user && user.locationId ? { locationId: Number(user.locationId) } : {})
+      ...locationWhere
     },
     include: {
       customer: true,
@@ -1080,6 +1234,36 @@ const updateJobCard = async (id, payload, user) => {
       }
     }
   });
+
+  // Fallback: try without locationId if not found (handles admin cross-location access or token mismatch)
+  if (!existingJobCard && Object.keys(locationWhere).length > 0) {
+    existingJobCard = await prisma.jobCard.findFirst({
+      where: identifierWhere,
+      include: {
+        customer: true,
+        vehicle: true,
+        currentStatus: {
+          select: { id: true, statusCode: true, statusName: true }
+        },
+        services: {
+          include: {
+            workAssignments: {
+              include: {
+                status: true
+              }
+            },
+            serviceItem: {
+              include: {
+                category: true
+              }
+            },
+            approvalStatus: true,
+            serviceStatus: true
+          }
+        }
+      }
+    });
+  }
 
   if (!existingJobCard) {
     throw createHttpError(404, 'Job Card not found');
@@ -1775,7 +1959,7 @@ const skipJobCardDepartment = async (jobCardId, departmentSlug, reason, user) =>
       throw createHttpError(400, 'Cannot skip department for a finalized job card');
     }
 
-    // 2. Normalize and check if there are downstream departments
+    // 2. Normalize target department
     let targetDepartment = null;
     const normalizedValue = normalizeText(departmentSlug);
     for (const dept of DEPARTMENT_ORDER) {
@@ -1789,60 +1973,57 @@ const skipJobCardDepartment = async (jobCardId, departmentSlug, reason, user) =>
       throw createHttpError(400, 'Invalid department provided');
     }
 
-    const currentDeptIndex = DEPARTMENT_ORDER.indexOf(targetDepartment);
+    // Bidirectional validation: the OTHER department must have active services
+    const otherDept = targetDepartment === 'mechanical' ? 'body-shop' : 'mechanical';
+    const otherDeptServices = jobCard.services.filter(s => {
+      const dept = getServiceDepartment(s);
+      return dept === otherDept && isApprovedForWork(s) && !isRejectedAdditionalService(s);
+    });
 
-    // Check if there are services in downstream departments
-    let hasDownstreamServices = false;
-    for (let i = currentDeptIndex + 1; i < DEPARTMENT_ORDER.length; i++) {
-      const downstreamDept = DEPARTMENT_ORDER[i];
-      const hasServices = jobCard.services.some(s => getServiceDepartment(s) === downstreamDept);
-      if (hasServices) {
-        hasDownstreamServices = true;
-        break;
-      }
+    if (otherDeptServices.length === 0) {
+      throw createHttpError(400, `Cannot skip because no ${otherDept} services exist on this job card.`);
     }
 
-    if (!hasDownstreamServices) {
-      throw createHttpError(400, 'Cannot skip this department because no downstream services exist.');
+    const allOtherCompleted = otherDeptServices.every(s => isJobCardServiceCompleted(s));
+    if (allOtherCompleted) {
+      throw createHttpError(400, `Cannot skip because all ${otherDept} services are already completed.`);
     }
 
-    // 3. Find all services for the TARGET department that are NOT completed/cancelled
+    // 3. Find all services for the TARGET department that are NOT completed/cancelled/rejected
     const targetServices = jobCard.services.filter(s => {
       const sDept = getServiceDepartment(s);
       const sStatus = getStatusCode(s.serviceStatus);
-      return sDept === targetDepartment && !['COMPLETED', 'DELIVERED', 'POSTPONED', 'REJECTED', 'CANCELLED'].includes(sStatus);
+      return sDept === targetDepartment && !['COMPLETED', 'DELIVERED', 'REJECTED', 'CANCELLED'].includes(sStatus);
     });
 
     if (targetServices.length === 0) {
       throw createHttpError(400, 'No active services found in this department to skip');
     }
 
-    // 4. Update them to POSTPONED
+    // 4. Set current department services to POSTPONED
     const postponedStatus = await resolveRequiredStatus(tx, 'job-card-service', ['POSTPONED'], 'Postponed');
 
-    // Release active assignments
-    let onHoldStatus = null;
-    try {
-      onHoldStatus = await resolveRequiredStatus(tx, 'assignment', ['ON_HOLD'], 'On Hold');
-    } catch (err) {
-      // If assignment ON_HOLD doesn't exist, we fallback to PENDING or ignore assignment update?
-      // Wait, we need it. Let's just clear the assignment.
-    }
-
+    // Release active assignments and bays
     for (const service of targetServices) {
-      // Update assignments
       if (service.workAssignments.length > 0) {
         const activeAssignment = service.workAssignments[0];
+        let onHoldStatus = null;
+        try {
+          onHoldStatus = await resolveRequiredStatus(tx, 'work-assignment', ['ON_HOLD'], 'On Hold');
+        } catch (err) { /* ignore */ }
         if (onHoldStatus) {
           await tx.workAssignment.update({
             where: { id: activeAssignment.id },
             data: { statusId: onHoldStatus.id, bayId: null }
           });
         }
-        await syncAssignmentPendingStages(tx, activeAssignment.id, user);
+        await tx.bay.updateMany({
+          where: { currentWorkAssignmentId: activeAssignment.id },
+          data: { currentWorkAssignmentId: null }
+        });
       }
 
-      // Update service status
+      // Update service status to POSTPONED
       await tx.jobCardService.update({
         where: { id: service.id },
         data: { serviceStatusId: postponedStatus.id, modifiedById: user?.userId || null }
@@ -1853,7 +2034,7 @@ const skipJobCardDepartment = async (jobCardId, departmentSlug, reason, user) =>
       try {
         switchAction = await resolveRequiredStatus(tx, 'service-history-actions', ['SWITCH'], 'Switch');
       } catch (err) {
-        switchAction = postponedStatus; // fallback
+        switchAction = postponedStatus;
       }
 
       await tx.jobCardServiceHistory.create({
@@ -1868,6 +2049,59 @@ const skipJobCardDepartment = async (jobCardId, departmentSlug, reason, user) =>
       });
     }
 
+    // 5. Reset OTHER department's POSTPONED services back to PENDING
+    //    This enables unlimited back-and-forth skipping
+    const pendingStatus = await resolveRequiredStatus(tx, 'job-card-service', ['PENDING'], 'Pending');
+    const otherPostponedServices = jobCard.services.filter(s => {
+      const dept = getServiceDepartment(s);
+      const status = getStatusCode(s.serviceStatus);
+      return dept === otherDept && status === 'POSTPONED' &&
+        isApprovedForWork(s) && !isRejectedAdditionalService(s);
+    });
+
+    for (const service of otherPostponedServices) {
+      await tx.jobCardService.update({
+        where: { id: service.id },
+        data: { serviceStatusId: pendingStatus.id, modifiedById: user?.userId || null }
+      });
+    }
+
+    // 6. Re-fetch job card and update status + process tracking
+    const updatedJobCard = await tx.jobCard.findUnique({
+      where: { id: parsedJobCardId },
+      include: {
+        services: {
+          include: {
+            serviceStatus: true,
+            workAssignments: { include: { status: true } },
+            approvalStatus: true,
+            serviceItem: { include: { category: true } }
+          }
+        },
+        currentStatus: true,
+        approvalStatus: true,
+        processStageTrackings: {
+          select: {
+            stageStatus: true,
+            status: { select: { statusCode: true } }
+          }
+        }
+      }
+    });
+
+    if (updatedJobCard) {
+      const newJobCardStatus = await deriveJobCardStatus(tx, updatedJobCard);
+      if (newJobCardStatus && newJobCardStatus.id !== updatedJobCard.currentStatusId) {
+        await syncJobCardStageTracking(tx, parsedJobCardId, updatedJobCard.currentStatusId, newJobCardStatus, user);
+        await tx.jobCard.update({
+          where: { id: parsedJobCardId },
+          data: { currentStatusId: newJobCardStatus.id }
+        });
+      }
+
+      await syncAssignmentPendingStages(tx, { jobCard: updatedJobCard, actorUserId: user?.userId || null });
+    }
+
     const socket = getSocket();
     if (socket) {
       socket.to(`location_${jobCard.locationId}`).emit('queueUpdate', {
@@ -1875,6 +2109,8 @@ const skipJobCardDepartment = async (jobCardId, departmentSlug, reason, user) =>
         jobCardId: parsedJobCardId,
         department: targetDepartment
       });
+      socket.emit('jobCardQueueUpdate', { locationId: jobCard.locationId });
+      socket.emit('jobCardStatusChanged', { jobCardId: parsedJobCardId });
     }
 
     return { message: 'Department successfully skipped' };

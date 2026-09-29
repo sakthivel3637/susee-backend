@@ -417,17 +417,14 @@ const toQueueResponse = (jobCard, department) => {
   const services = getDepartmentServices(jobCard, department)
     .filter((service) => isApprovedForWork(service) && !isRejectedAdditionalService(service));
 
-  const currentDeptIndex = DEPARTMENT_ORDER.indexOf(department);
+  // Bidirectional skip: show Skip Dept when OTHER department has unassigned, uncompleted work
   let canSkip = false;
-  if (currentDeptIndex >= 0) {
-    for (let i = currentDeptIndex + 1; i < DEPARTMENT_ORDER.length; i++) {
-      const downstreamDept = DEPARTMENT_ORDER[i];
-      const hasServices = (jobCard.services || []).some((s) => getServiceDepartment(s) === downstreamDept);
-      if (hasServices) {
-        canSkip = true;
-        break;
-      }
-    }
+  const otherDept = department === 'mechanical' ? 'body-shop' : 'mechanical';
+  const otherDeptHasServices = hasDepartmentServicesAvailableForWork(jobCard, otherDept);
+  const otherDeptCompleted = areDepartmentServicesCompleted(jobCard, otherDept);
+  const otherDeptAssigned = areDepartmentServicesAssigned(jobCard, otherDept);
+  if (otherDeptHasServices && !otherDeptCompleted && !otherDeptAssigned) {
+    canSkip = true;
   }
 
   return {
