@@ -222,7 +222,7 @@ const login = async ({ emailId, password }, platform = 'web') => {
 
   const menus = await getAllowedMenus(user.roleId, user.role.slug);
   const userModules = menus.map(m => m.module);
-  
+
   if (platform === 'web') {
     const hasWebModule = userModules.some(mod => platformModules.web.includes(mod));
     if (!hasWebModule) {
@@ -242,6 +242,16 @@ const login = async ({ emailId, password }, platform = 'web') => {
     const hasCrmModule = userModules.some(mod => platformModules['mobile-crm'].includes(mod));
     if (!hasCrmModule) {
       throw createHttpError(403, 'This account is not permitted to access the CRM application.');
+    }
+  } else if (platform === 'mobile-manager') {
+    const hasManagerModule = userModules.some(mod => platformModules['mobile-manager'].includes(mod));
+    if (!hasManagerModule) {
+      throw createHttpError(403, 'This account is not permitted to access the Manager application.');
+    }
+  } else if (platform === 'mobile-supervisor') {
+    const hasSupervisorModule = userModules.some(mod => platformModules['mobile-supervisor'].includes(mod));
+    if (!hasSupervisorModule) {
+      throw createHttpError(403, 'This account is not permitted to access the Supervisor application.');
     }
   }
 
