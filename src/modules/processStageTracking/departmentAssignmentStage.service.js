@@ -57,6 +57,13 @@ const isRejectedAdditionalService = (service) => {
   return Boolean(service && service.isAdditional && getStatusCode(service.approvalStatus) === 'REJECTED');
 };
 
+const isPendingAdditionalService = (service) => {
+  if (!service || !service.isAdditional) return false;
+  const code = getStatusCode(service.approvalStatus);
+  // Blank / unknown approval status on additional work is treated as PENDING
+  return !code || code === 'PENDING';
+};
+
 const isApprovedForWork = (service) => {
   if (!service || !service.isAdditional) {
     return true;
@@ -115,6 +122,12 @@ const areDepartmentServicesAssigned = (jobCard, department) => {
 };
 
 const areDepartmentServicesCompleted = (jobCard, department) => {
+  // If there are pending additional services for this department, it is NOT complete.
+  const hasPendingForDept = getDepartmentServices(jobCard, department).some(isPendingAdditionalService);
+  if (hasPendingForDept) {
+    return false;
+  }
+
   const services = getDepartmentServices(jobCard, department).filter((service) => {
     return isApprovedForWork(service) && !isRejectedAdditionalService(service);
   });

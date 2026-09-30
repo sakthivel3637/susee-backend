@@ -138,6 +138,19 @@ const isRejectedAdditionalService = (service) => {
   return Boolean(service && service.isAdditional && REJECTED_APPROVAL_STATUS_CODES.includes(getStatusCode(service.approvalStatus)));
 };
 
+const isPendingAdditionalService = (service) => {
+  if (!service || !service.isAdditional) return false;
+  const code = getStatusCode(service.approvalStatus);
+  // Blank / unknown approval status on additional work is treated as PENDING
+  return !code || code === 'PENDING';
+};
+
+// Returns true when the job card has at least one additional service still awaiting
+// customer approval (neither APPROVED nor REJECTED yet).
+const hasPendingAdditionalServices = (jobCard) => {
+  return (jobCard.services || []).some(isPendingAdditionalService);
+};
+
 const isCompletedStatusCode = (statusCode) => {
   const code = String(statusCode || '').trim().toUpperCase();
   return (
@@ -193,6 +206,12 @@ const isJobCardServiceCompleted = (service) => {
 };
 
 const areAllJobCardServicesCompleted = (jobCard) => {
+  // If any additional work is still awaiting customer approval, the job card is
+  // NOT complete — it must stay in its current department until resolved.
+  if (hasPendingAdditionalServices(jobCard)) {
+    return false;
+  }
+
   const services = (jobCard.services || []).filter((service) => {
     return isApprovedForWork(service) && !isRejectedAdditionalService(service);
   });

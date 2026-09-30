@@ -3,6 +3,7 @@ const prisma = require('../../config/db');
 const { STATUS_MODULE_CODES, resolveStatusFromCodes, resolveStatusIdFromCodes } = require('../../common/utils/status.util');
 const { validateTwilioRequest, sendAdditionalWorkApproval } = require('../../providers/whatsapp/whatsapp.service');
 const { createStorageProvider } = require('../../providers/storage/storage.provider');
+const { refreshJobCardStatus } = require('../jobCards/jobCard.service');
 
 const storageProvider = createStorageProvider();
 
@@ -450,7 +451,7 @@ const getJobCardForAdditionalWork = async (tx, jobCardIdentifier, user) => {
     currentStatus: true,
     approvalStatus: true,
     workAssignments: {
-      where: { completedAt: null },
+      orderBy: { id: 'desc' },
       include: {
         assignedUser: {
           select: { id: true, fullName: true, employeeCode: true, mobileNo: true }
@@ -1032,7 +1033,6 @@ const handleTwilioWebhook = async (req) => {
       jobCard: {
         include: {
           workAssignments: {
-            where: { completedAt: null },
             orderBy: { id: 'desc' },
             include: {
               jobCardService: {
@@ -1137,9 +1137,19 @@ const handleTwilioWebhook = async (req) => {
     });
 
     const department = approval.services.length > 0 ? getServiceDepartment(approval.services[0]) : null;
-    const activeAssignment = department ? approval.jobCard.workAssignments.find(
-      (wa) => getServiceDepartment(wa.jobCardService) === department
-    ) : null;
+    // Prefer an active (not yet completed) assignment for the department.
+    // If the mechanic already completed their work before the customer approved,
+    // fall back to the most recent completed assignment so the same mechanic
+    // is still assigned to the additional work.
+    const departmentAssignments = department
+      ? approval.jobCard.workAssignments.filter(
+          (wa) => getServiceDepartment(wa.jobCardService) === department
+        )
+      : [];
+    const activeAssignment =
+      departmentAssignments.find((wa) => !wa.completedAt) ||
+      departmentAssignments[0] ||
+      null;
 
     const actualServiceStatusId = serviceStatusId || (
       (decision === 'APPROVED' && activeAssignment)
@@ -1203,6 +1213,8 @@ const handleTwilioWebhook = async (req) => {
         finalAmount
       }
     });
+
+    await refreshJobCardStatus(tx, approval.jobCardId, null);
 
     const updatedApproval = await tx.jobCardApproval.findUnique({
       where: { id: approval.id },
