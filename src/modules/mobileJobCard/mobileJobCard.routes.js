@@ -1,6 +1,7 @@
 const router = require('express').Router();
 
 const controller = require('./mobileJobCard.controller');
+const webJobCardController = require('../jobCards/jobCard.controller');
 const { uploadVehiclePhotos } = require('./mobileJobCard.upload');
 const { normalizeCreateJobCardPayload, validateCreateJobCardPayload, validateUpdateJobCardPayload, validateIdParam } = require('./mobileJobCard.validation');
 const { authMiddleware } = require('../../common/middleware/auth.middleware');
@@ -13,11 +14,14 @@ const canUpdateJobCards = permissionMiddleware('/job-cards', 'canUpdate');
 router.use(authMiddleware);
 
 router.get('/list', canReadJobCards, controller.jobCardList);
+router.get('/floor-supervisor-list', canReadJobCards, webJobCardController.getJobCards);
 router.get('/detail/:id', canReadJobCards, validateIdParam, controller.jobCardDetail);
 router.get('/queue', canReadJobCards, controller.pendingQueue);
 router.get('/queue/:id', canReadJobCards, validateIdParam, controller.queueDetail);
 router.post( '/create-from-gate-entry', canCreateJobCards, uploadVehiclePhotos, normalizeCreateJobCardPayload, validateCreateJobCardPayload, controller.createFromGateEntry );
 router.put( '/update/:id', canUpdateJobCards, validateIdParam, uploadVehiclePhotos, normalizeCreateJobCardPayload, validateUpdateJobCardPayload, controller.updateJobCard );
+router.put( '/update-services/:id', canUpdateJobCards, validateIdParam, controller.updateJobCardServices );
+router.put( '/resume-service/:jobCardId/:serviceId', canUpdateJobCards, controller.resumeService );
 router.get('/lookup-vehicle', canReadJobCards, controller.lookupVehicle);
 
 module.exports = router;

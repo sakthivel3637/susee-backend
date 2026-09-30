@@ -836,7 +836,15 @@ const listJobCards = async (query, user) => {
           select: { id: true, fullName: true, mobileNo: true }
         },
         vehicle: {
-          select: { id: true, registrationNo: true }
+          select: {
+            id: true,
+            registrationNo: true,
+            model: true,
+            variant: true,
+            brand: {
+              select: { id: true, name: true }
+            }
+          }
         },
         currentStatus: {
           select: { id: true, statusCode: true, statusName: true }
@@ -844,11 +852,32 @@ const listJobCards = async (query, user) => {
         location: {
           select: { id: true, locationName: true, locationCode: true }
         },
+        gateEntry: {
+          select: { id: true, entryTime: true }
+        },
+        approvals: {
+          select: {
+            id: true,
+            approvalCode: true,
+            status: {
+              select: { statusCode: true, statusName: true }
+            },
+            customerResponse: true,
+            mechanicExplanation: true,
+            voice_note_url: true,
+            createdAt: true
+          }
+        },
         services: {
           select: {
             id: true,
             serviceName: true,
             isAdditional: true,
+            price: true,
+            quantity: true,
+            serviceStatus: {
+              select: { id: true, statusCode: true, statusName: true }
+            },
             approvalStatus: {
               select: { statusCode: true }
             },
@@ -931,6 +960,49 @@ const listJobCards = async (query, user) => {
     })
     : [];
   const bayMap = new Map(bays.map((bay) => [bay.id, bay]));
+
+  // Batch fetch media files
+  const orConditions = [];
+  jobCards.forEach(jc => {
+    orConditions.push({ moduleName: 'JOB_CARD', moduleRecordId: jc.id });
+    orConditions.push({ moduleName: 'Job Card', moduleRecordId: jc.id });
+    if (jc.vehicle?.id) {
+      orConditions.push({ moduleName: 'VEHICLE', moduleRecordId: jc.vehicle.id });
+      orConditions.push({ moduleName: 'Vehicle', moduleRecordId: jc.vehicle.id });
+    }
+    if (jc.gateEntry?.id) {
+      orConditions.push({ moduleName: 'GATE_ENTRY', moduleRecordId: jc.gateEntry.id });
+      orConditions.push({ moduleName: 'Gate Entry', moduleRecordId: jc.gateEntry.id });
+    }
+  });
+
+  let mediaFiles = [];
+  if (orConditions.length > 0) {
+    try {
+      const rawMediaFiles = await prisma.mediaFile.findMany({ where: { OR: orConditions } });
+      mediaFiles = rawMediaFiles.map(f => {
+        let fileUrl = f.fileUrl || f.url || '';
+        if (storageProvider && storageProvider.isConfigured && f.blobName) {
+          try {
+            fileUrl = storageProvider.generateSasUrl(f.blobName, 3600);
+          } catch (sasErr) {
+            console.error('Failed to sign media SAS URL:', sasErr);
+          }
+        }
+        return { ...f, fileUrl };
+      });
+    } catch (e) {
+      console.error('Failed to batch fetch mediaFiles for jobCards:', e);
+    }
+  }
+
+  jobCards.forEach(jc => {
+    jc.mediaFiles = mediaFiles.filter(m =>
+      (m.moduleRecordId === jc.id && (m.moduleName === 'JOB_CARD' || m.moduleName === 'Job Card')) ||
+      (jc.vehicle?.id && m.moduleRecordId === jc.vehicle.id && (m.moduleName === 'VEHICLE' || m.moduleName === 'Vehicle')) ||
+      (jc.gateEntry?.id && m.moduleRecordId === jc.gateEntry.id && (m.moduleName === 'GATE_ENTRY' || m.moduleName === 'Gate Entry'))
+    );
+  });
 
   return {
     jobCards: jobCards.map((jobCard) => toJobCardListResponse(jobCard, department, bayMap)),
@@ -2126,5 +2198,7 @@ module.exports = {
   toJobCardListResponse,
   postponeJobCardService,
   resumeJobCardService,
-  skipJobCardDepartment
+  skipJobCardDepartment,
+  deriveJobCardStatus,
+  syncJobCardStageTracking
 };

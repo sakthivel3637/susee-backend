@@ -9,7 +9,7 @@ const { createStorageProvider } = require('../../providers/storage/storage.provi
 const storageProvider = createStorageProvider();
 const { STATUS_MODULE_CODES, resolveStatusFromCodes, resolveStatusIdFromCodes, statusModuleFilter } = require('../../common/utils/status.util');
 const { completeStage } = require('../processStageTracking/processStageTracking.service');
-const { startNextAssignmentPendingStage } = require('../processStageTracking/departmentAssignmentStage.service');
+const { startNextAssignmentPendingStage, syncAssignmentPendingStages } = require('../processStageTracking/departmentAssignmentStage.service');
 const jobCardService = require('../jobCards/jobCard.service');
 
 const JOB_CARD_CREATED_STATUS_CODES = ['JOB_CARD_CREATED', 'CREATED'];
@@ -712,6 +712,46 @@ const jobCardListSelect = {
     select: {
       services: true
     }
+  },
+  workAssignments: {
+    select: {
+      id: true,
+      assignedUserId: true,
+      assignedUser: {
+        select: {
+          id: true,
+          fullName: true,
+          employeeCode: true
+        }
+      },
+      status: {
+        select: {
+          id: true,
+          statusName: true,
+          statusCode: true
+        }
+      },
+      jobCardService: {
+        select: {
+          id: true,
+          serviceName: true,
+          serviceItem: {
+            select: {
+              category: {
+                select: {
+                  id: true,
+                  name: true
+                }
+              }
+            }
+          }
+        }
+      },
+      bayId: true,
+      assignedAt: true,
+      startedAt: true,
+      completedAt: true
+    }
   }
 };
 
@@ -734,74 +774,155 @@ const toBrandResponse = (brand) => brand
   }
   : null;
 
-const toJobCardListResponse = (jobCard) => ({
-  id: jobCard.id,
-  jobCardNo: jobCard.jobCardNo,
-  gateEntryId: jobCard.gateEntryId,
-  gateEntry: jobCard.gateEntry
-    ? {
-      id: jobCard.gateEntry.id,
-      gateEntryNo: jobCard.gateEntry.gateEntryNo,
-      entryTime: jobCard.gateEntry.entryTime
+const getServiceDepartment = (service) => {
+  if (!service) return null;
+  let dept = null;
+  const category = service.serviceItem ? service.serviceItem.category : (service.category || null);
+  if (category) {
+    dept = category.slug || category.name;
+  } else if (service.categoryName) {
+    dept = service.categoryName;
+  }
+  if (!dept) return null;
+  
+  const norm = String(dept).toLowerCase();
+  if (norm.includes('body')) return 'body-shop';
+  return 'mechanical';
+};
+
+const computeWorkType = (jobCard) => {
+  const services = jobCard.services || [];
+  const assignmentServices = (jobCard.workAssignments || []).map((a) => a.jobCardService).filter(Boolean);
+  const allServices = [...services, ...assignmentServices];
+
+  let hasMechanical = false;
+  let hasBodyShop = false;
+
+  for (const s of allServices) {
+    const dept = getServiceDepartment(s);
+    if (dept === 'mechanical') hasMechanical = true;
+    if (dept === 'body-shop') hasBodyShop = true;
+  }
+
+  if (!hasMechanical && !hasBodyShop) {
+    const statusCode = String(jobCard.currentStatus?.statusCode || '').toUpperCase();
+    if (statusCode.includes('BODY_SHOP')) {
+      hasBodyShop = true;
+    } else {
+      hasMechanical = true;
     }
-    : null,
-  location: jobCard.location || null,
-  createdBy: jobCard.createdBy
-    ? {
-      id: jobCard.createdBy.id,
-      name: jobCard.createdBy.fullName,
-      employeeCode: jobCard.createdBy.employeeCode
-    }
-    : null,
-  expectedDeliveryAt: jobCard.expectedDeliveryAt,
-  totalEstimate: Number(jobCard.totalEstimate),
-  billing: {
-    serviceSubtotal: jobCard.serviceSubtotal === null || jobCard.serviceSubtotal === undefined ? null : Number(jobCard.serviceSubtotal),
-    taxRate: jobCard.taxRate === null || jobCard.taxRate === undefined ? null : Number(jobCard.taxRate),
-    taxAmount: jobCard.taxAmount === null || jobCard.taxAmount === undefined ? null : Number(jobCard.taxAmount),
-    discountAmount: jobCard.discountAmount === null || jobCard.discountAmount === undefined ? null : Number(jobCard.discountAmount),
-    finalAmount: jobCard.finalAmount === null || jobCard.finalAmount === undefined ? null : Number(jobCard.finalAmount),
-    discountReason: jobCard.discountReason || null
-  },
-  customerComplaint: jobCard.customerComplaint,
-  additionalNotes: jobCard.additionalNotes,
-  createdAt: jobCard.createdAt,
-  updatedAt: jobCard.updatedAt,
-  currentStatus: toStatusResponse(jobCard.currentStatus),
-  approvalStatus: toStatusResponse(jobCard.approvalStatus),
-  customer: jobCard.customer
-    ? {
-      id: jobCard.customer.id,
-      name: jobCard.customer.fullName,
-      mobileNo: jobCard.customer.mobileNo,
-      alternateMobileNo: jobCard.customer.alternateMobileNo,
-      emailId: jobCard.customer.emailId,
-      address: jobCard.customer.address
-    }
-    : null,
-  vehicle: jobCard.vehicle
-    ? {
-      id: jobCard.vehicle.id,
-      registrationNumber: jobCard.vehicle.registrationNo,
-      model: jobCard.vehicle.model,
-      brand: toBrandResponse(jobCard.vehicle.brand),
-      variant: jobCard.vehicle.variant,
-      fuelType: jobCard.vehicle.fuelType,
-      color: jobCard.vehicle.vehicleColor,
-      chassisNo: jobCard.vehicle.chassisNo,
-      engineNo: jobCard.vehicle.engineNo
-    }
-    : null,
-  serviceCount: jobCard._count ? jobCard._count.services : (jobCard.services || []).length,
-  services: (jobCard.services || []).map((service) => ({
-    id: service.id,
-    serviceItemId: service.serviceItemId,
-    name: service.serviceName,
-    price: Number(service.price),
-    quantity: service.quantity,
-    isAdditional: service.isAdditional
-  }))
-});
+  }
+
+  if (hasMechanical && hasBodyShop) return 'Both';
+  if (hasBodyShop) return 'Body Shop';
+  return 'Mechanic';
+};
+
+const toJobCardListResponse = (jobCard) => {
+  const allAssignments = (jobCard.workAssignments || []).map(toAssignmentSummary);
+  const activeAssignments = allAssignments.filter((assignment) => !assignment.completedAt);
+  const displayAssignments = allAssignments;
+  
+  const assignedMechanics = Array.from(
+    new Map(
+      displayAssignments
+        .filter((assignment) => assignment.assignedUser)
+        .map((assignment) => [assignment.assignedUser.id, assignment.assignedUser])
+    ).values()
+  );
+  const assignedMechanic = assignedMechanics[0] || null;
+  
+  const assignedBays = Array.from(
+    new Map(
+      displayAssignments
+        .filter((assignment) => assignment.bay)
+        .map((assignment) => [assignment.bay.id, assignment.bay])
+    ).values()
+  );
+  const assignedBay = assignedBays[0] || null;
+
+  return {
+    id: jobCard.id,
+    jobCardNo: jobCard.jobCardNo,
+    gateEntryId: jobCard.gateEntryId,
+    gateEntry: jobCard.gateEntry
+      ? {
+        id: jobCard.gateEntry.id,
+        gateEntryNo: jobCard.gateEntry.gateEntryNo,
+        entryTime: jobCard.gateEntry.entryTime
+      }
+      : null,
+    location: jobCard.location || null,
+    createdBy: jobCard.createdBy
+      ? {
+        id: jobCard.createdBy.id,
+        name: jobCard.createdBy.fullName,
+        employeeCode: jobCard.createdBy.employeeCode
+      }
+      : null,
+    expectedDeliveryAt: jobCard.expectedDeliveryAt,
+    totalEstimate: Number(jobCard.totalEstimate),
+    billing: {
+      serviceSubtotal: jobCard.serviceSubtotal === null || jobCard.serviceSubtotal === undefined ? null : Number(jobCard.serviceSubtotal),
+      taxRate: jobCard.taxRate === null || jobCard.taxRate === undefined ? null : Number(jobCard.taxRate),
+      taxAmount: jobCard.taxAmount === null || jobCard.taxAmount === undefined ? null : Number(jobCard.taxAmount),
+      discountAmount: jobCard.discountAmount === null || jobCard.discountAmount === undefined ? null : Number(jobCard.discountAmount),
+      finalAmount: jobCard.finalAmount === null || jobCard.finalAmount === undefined ? null : Number(jobCard.finalAmount),
+      discountReason: jobCard.discountReason || null
+    },
+    customerComplaint: jobCard.customerComplaint,
+    additionalNotes: jobCard.additionalNotes,
+    createdAt: jobCard.createdAt,
+    updatedAt: jobCard.updatedAt,
+    currentStatus: toStatusResponse(jobCard.currentStatus),
+    approvalStatus: toStatusResponse(jobCard.approvalStatus),
+    customer: jobCard.customer
+      ? {
+        id: jobCard.customer.id,
+        name: jobCard.customer.fullName,
+        mobileNo: jobCard.customer.mobileNo,
+        alternateMobileNo: jobCard.customer.alternateMobileNo,
+        emailId: jobCard.customer.emailId,
+        address: jobCard.customer.address
+      }
+      : null,
+    vehicle: jobCard.vehicle
+      ? {
+        id: jobCard.vehicle.id,
+        registrationNumber: jobCard.vehicle.registrationNo,
+        model: jobCard.vehicle.model,
+        brand: toBrandResponse(jobCard.vehicle.brand),
+        variant: jobCard.vehicle.variant,
+        fuelType: jobCard.vehicle.fuelType,
+        color: jobCard.vehicle.vehicleColor,
+        chassisNo: jobCard.vehicle.chassisNo,
+        engineNo: jobCard.vehicle.engineNo
+      }
+      : null,
+    workType: computeWorkType(jobCard),
+    workAssignments: activeAssignments,
+    activeAssignments,
+    assignmentHistory: displayAssignments,
+    assignedMechanic,
+    assignedMechanics,
+    assignedBay,
+    assignedBays,
+    bay: assignedBay,
+    technician: assignedMechanics.length > 0 ? assignedMechanics.map((mechanic) => mechanic.fullName).join(', ') : null,
+    technicianId: assignedMechanic ? assignedMechanic.id : null,
+    technicianEmployeeCode: assignedMechanic ? assignedMechanic.employeeCode : null,
+    serviceCount: jobCard._count ? jobCard._count.services : (jobCard.services || []).length,
+    canCreateJobCard: !jobCard.jobCards || jobCard.jobCards.length === 0,
+    services: (jobCard.services || []).map((service) => ({
+      id: service.id,
+      serviceItemId: service.serviceItemId,
+      name: service.serviceName,
+      price: Number(service.price),
+      quantity: service.quantity,
+      isAdditional: service.isAdditional
+    }))
+  };
+};
 
 const jobCardDetailSelect = {
   ...jobCardListSelect,
@@ -830,6 +951,46 @@ const jobCardDetailSelect = {
       createdAt: 'desc'
     },
     take: 10
+  },
+  workAssignments: {
+    select: {
+      id: true,
+      assignedUserId: true,
+      assignedUser: {
+        select: {
+          id: true,
+          fullName: true,
+          employeeCode: true
+        }
+      },
+      status: {
+        select: {
+          id: true,
+          statusName: true,
+          statusCode: true
+        }
+      },
+      jobCardService: {
+        select: {
+          id: true,
+          serviceName: true,
+          serviceItem: {
+            select: {
+              category: {
+                select: {
+                  id: true,
+                  name: true
+                }
+              }
+            }
+          }
+        }
+      },
+      bayId: true,
+      assignedAt: true,
+      startedAt: true,
+      completedAt: true
+    }
   }
 };
 
@@ -884,7 +1045,70 @@ const toMediaResponse = (mediaFile) => {
   };
 };
 
+const toAssignmentSummary = (assignment) => ({
+  id: assignment.id,
+  jobCardId: assignment.jobCardId,
+  jobCardServiceId: assignment.jobCardServiceId,
+  assignedUserId: assignment.assignedUserId,
+  bayId: assignment.bayId || null,
+  bay: assignment.bay ? {
+    id: assignment.bay.id,
+    bayName: assignment.bay.bayName,
+    bayCode: assignment.bay.bayCode
+  } : null,
+  assignedAt: assignment.assignedAt,
+  startedAt: assignment.startedAt,
+  completedAt: assignment.completedAt,
+  status: assignment.status
+    ? {
+      id: assignment.status.id,
+      statusCode: assignment.status.statusCode,
+      statusName: assignment.status.statusName
+    }
+    : null,
+  assignedUser: assignment.assignedUser
+    ? {
+      id: assignment.assignedUser.id,
+      fullName: assignment.assignedUser.fullName,
+      employeeCode: assignment.assignedUser.employeeCode
+    }
+    : null,
+  service: assignment.jobCardService
+    ? {
+      id: assignment.jobCardService.id,
+      serviceName: assignment.jobCardService.serviceName,
+      category: assignment.jobCardService.serviceItem && assignment.jobCardService.serviceItem.category
+        ? {
+          id: assignment.jobCardService.serviceItem.category.id,
+          name: assignment.jobCardService.serviceItem.category.name,
+          slug: assignment.jobCardService.serviceItem.category.slug
+        }
+        : null
+    }
+    : null
+});
+
 const toJobCardDetailResponse = (jobCard, mediaFiles = []) => {
+  const allAssignments = (jobCard.workAssignments || []).map(toAssignmentSummary);
+  const activeAssignments = allAssignments.filter((assignment) => !assignment.completedAt);
+  const displayAssignments = allAssignments;
+  const assignedMechanics = Array.from(
+    new Map(
+      displayAssignments
+        .filter((assignment) => assignment.assignedUser)
+        .map((assignment) => [assignment.assignedUser.id, assignment.assignedUser])
+    ).values()
+  );
+  const assignedMechanic = assignedMechanics[0] || null;
+  const assignedBays = Array.from(
+    new Map(
+      displayAssignments
+        .filter((assignment) => assignment.bay)
+        .map((assignment) => [assignment.bay.id, assignment.bay])
+    ).values()
+  );
+  const assignedBay = assignedBays[0] || null;
+
   const services = (jobCard.services || []).map((service) => {
     const price = Number(service.price);
     const quantity = service.quantity;
@@ -980,7 +1204,18 @@ const toJobCardDetailResponse = (jobCard, mediaFiles = []) => {
         }
         : null,
       createdAt: log.createdAt
-    }))
+    })),
+    workAssignments: activeAssignments,
+    activeAssignments,
+    assignmentHistory: displayAssignments,
+    assignedMechanic,
+    assignedMechanics,
+    assignedBay,
+    assignedBays,
+    bay: assignedBay,
+    technician: assignedMechanics.length > 0 ? assignedMechanics.map((mechanic) => mechanic.fullName).join(', ') : null,
+    technicianId: assignedMechanic ? assignedMechanic.id : null,
+    technicianEmployeeCode: assignedMechanic ? assignedMechanic.employeeCode : null
   };
 };
 
@@ -2129,6 +2364,313 @@ const lookupVehicleByNumber = async (vehicleNumber, user) => {
   };
 };
 
+const updateJobCardServices = async (jobCardId, servicesPayload, user) => {
+  const parsedJobCardId = Number(jobCardId);
+  if (!parsedJobCardId) throw createHttpError(400, 'Invalid job card ID');
+
+  return await prisma.$transaction(async (tx) => {
+    const jobCard = await tx.jobCard.findUnique({
+      where: { id: parsedJobCardId },
+      include: {
+        services: true,
+        currentStatus: true,
+        workAssignments: true
+      }
+    });
+
+    if (!jobCard) throw createHttpError(404, 'Job Card not found');
+
+    const closedStatuses = ['BILLED', 'INVOICED', 'DELIVERED', 'CANCELLED'];
+    if (closedStatuses.includes(jobCard.currentStatus?.statusCode)) {
+      throw createHttpError(400, `Cannot update services. Job card is ${jobCard.currentStatus?.statusName}`);
+    }
+
+    const statuses = await tx.statusMaster.findMany({
+      where: { module: { is: { moduleCode: 'job-card-service', isActive: true } }, isActive: true }
+    });
+
+    for (const payloadService of (servicesPayload || [])) {
+      const serviceId = Number(payloadService.id);
+      const newStatusString = (payloadService.status || '').toUpperCase().replace(/\s+/g, '_');
+      
+      const statusObj = statuses.find(s => s.statusCode === newStatusString || s.statusName.toUpperCase().replace(/\s+/g, '_') === newStatusString);
+      if (!statusObj) throw createHttpError(400, `Invalid status: ${payloadService.status}`);
+
+      const existingService = jobCard.services.find(s => s.id === serviceId);
+      if (!existingService) continue;
+
+      if (existingService.serviceStatusId !== statusObj.id) {
+        // Validate "In Progress"
+        if (statusObj.statusCode === 'IN_PROGRESS') {
+          const assignment = jobCard.workAssignments.find(a => a.jobCardServiceId === serviceId);
+          if (!assignment || !assignment.assignedUserId) {
+            throw createHttpError(400, `Cannot mark service ${existingService.serviceName} as In Progress without an assigned mechanic`);
+          }
+        }
+
+        await tx.jobCardService.update({
+          where: { id: serviceId },
+          data: { serviceStatusId: statusObj.id, modifiedById: user?.userId || null }
+        });
+
+        await tx.jobCardServiceHistory.create({
+          data: {
+            jobCardServiceId: serviceId,
+            actionTypeId: statusObj.id,
+            fromStatusId: existingService.serviceStatusId,
+            toStatusId: statusObj.id,
+            reason: statusObj.statusCode === 'POSTPONED' ? (payloadService.reason || 'Mobile Status Update - Postponed') : 'Mobile Status Update',
+            changedById: user?.userId || 1
+          }
+        });
+      }
+
+      // ─── POSTPONED: set assignment ON_HOLD + release bay (matches web flow) ───
+      if (statusObj.statusCode === 'POSTPONED') {
+        const activeAssignment = jobCard.workAssignments.find(
+          a => a.jobCardServiceId === serviceId && !a.completedAt
+        );
+
+        if (activeAssignment) {
+          const onHoldStatus = await tx.statusMaster.findFirst({
+            where: {
+              statusCode: 'ON_HOLD',
+              module: { is: { moduleCode: 'work-assignment', isActive: true } },
+              isActive: true
+            }
+          });
+
+          if (onHoldStatus) {
+            await tx.workAssignment.update({
+              where: { id: activeAssignment.id },
+              data: { statusId: onHoldStatus.id, modifiedById: user?.userId || null }
+            });
+          }
+
+          // Release the bay so another job can use it
+          await tx.bay.updateMany({
+            where: { currentWorkAssignmentId: activeAssignment.id },
+            data: { currentWorkAssignmentId: null }
+          });
+        }
+
+        // Complete any open process stage tracker
+        const activeTracker = await tx.processStageTracking.findFirst({
+          where: { jobCardId: parsedJobCardId, completedAt: null }
+        });
+        if (activeTracker) {
+          await tx.processStageTracking.update({
+            where: { id: activeTracker.id },
+            data: { completedAt: new Date() }
+          });
+        }
+
+        // Skip normal assignment sync — POSTPONED is fully handled above
+        continue;
+      }
+
+      // Sync Work Assignments
+      const assignment = jobCard.workAssignments.find(a => a.jobCardServiceId === serviceId);
+      if (assignment) {
+        const assignmentStatuses = await tx.statusMaster.findMany({ where: { module: { is: { moduleCode: 'work-assignment', isActive: true } }, isActive: true } });
+        const existingAssignmentStatus = assignmentStatuses.find(s => s.id === assignment.statusId);
+        const isBodyShop = existingAssignmentStatus?.statusCode?.includes('BODY_SHOP') || false;
+        const prefix = isBodyShop ? 'BODY_SHOP_' : 'MECHANICAL_';
+        
+        let baseStatusCode = statusObj.statusCode;
+        const normalizedName = (statusObj.statusName || '').toUpperCase().replace(/\s+/g, '_');
+        if (normalizedName === 'IN_PROGRESS' || baseStatusCode === 'IN_PROGRESS') baseStatusCode = 'IN_PROGRESS';
+        if (normalizedName === 'COMPLETED' || baseStatusCode === 'COMPLETED') baseStatusCode = 'COMPLETED';
+        if (normalizedName === 'ASSIGNED' || baseStatusCode === 'ASSIGNED') baseStatusCode = 'ASSIGNED';
+        
+        const matchAssignStatus = assignmentStatuses.find(s => s.statusCode === `${prefix}${baseStatusCode}` || s.statusName.toUpperCase().replace(/\s+/g, '_') === `${prefix}${baseStatusCode}`);
+        
+        if (matchAssignStatus && assignment.statusId !== matchAssignStatus.id) {
+          let updateData = { statusId: matchAssignStatus.id, modifiedById: user?.userId || null };
+          if (statusObj.statusCode === 'COMPLETED') updateData.completedAt = new Date();
+          if (statusObj.statusCode === 'IN_PROGRESS') updateData.startedAt = new Date();
+          
+          await tx.workAssignment.update({
+            where: { id: assignment.id },
+            data: updateData
+          });
+        }
+      }
+    }
+
+    // Recalculate job card status based on updated services
+    const updatedJobCard = await tx.jobCard.findUnique({
+      where: { id: parsedJobCardId },
+      include: {
+        services: {
+          include: {
+            serviceStatus: true,
+            workAssignments: { include: { status: true } },
+            approvalStatus: true,
+            serviceItem: { include: { category: true } }
+          }
+        },
+        currentStatus: true,
+        approvalStatus: true,
+        processStageTrackings: {
+          select: {
+            stageStatus: true,
+            status: { select: { statusCode: true } }
+          }
+        }
+      }
+    });
+
+    if (updatedJobCard) {
+      const newJobCardStatus = await jobCardService.deriveJobCardStatus(tx, updatedJobCard);
+      if (newJobCardStatus && newJobCardStatus.id !== updatedJobCard.currentStatusId) {
+        await jobCardService.syncJobCardStageTracking(tx, parsedJobCardId, updatedJobCard.currentStatusId, newJobCardStatus, user);
+        await tx.jobCard.update({
+          where: { id: parsedJobCardId },
+          data: { currentStatusId: newJobCardStatus.id }
+        });
+      }
+
+      await syncAssignmentPendingStages(tx, { jobCard: updatedJobCard, actorUserId: user?.userId || null });
+    }
+
+    // Return the updated job card
+    return { success: true, message: 'Services updated successfully' };
+  }, { maxWait: 20000, timeout: 50000 });
+};
+
+// ─── Resume a POSTPONED service (matches web API resumeJobCardService) ────────
+// PUT /mobile/job-cards/resume-service/:jobCardId/:serviceId
+// Body: { bayId, mechanicId }
+const resumeJobCardService = async (jobCardId, serviceId, bayId, mechanicId, user) => {
+  const parsedJobCardId = Number(jobCardId);
+  const parsedServiceId = Number(serviceId);
+
+  return prisma.$transaction(async (tx) => {
+    const service = await tx.jobCardService.findUnique({
+      where: { id: parsedServiceId, jobCardId: parsedJobCardId },
+      include: {
+        jobCard: { include: { currentStatus: true } },
+        serviceStatus: true,
+        workAssignments: { where: { completedAt: null }, orderBy: { createdAt: 'desc' } },
+        serviceItem: { include: { category: true } }
+      }
+    });
+
+    if (!service) throw createHttpError(404, 'Service not found in Job Card');
+
+    const currentStatusCode = (service.serviceStatus?.statusCode || '').toUpperCase();
+    if (currentStatusCode !== 'POSTPONED') {
+      throw createHttpError(400, 'Only POSTPONED services can be resumed');
+    }
+
+    // Validate bay is available
+    const bay = await tx.bay.findUnique({ where: { id: Number(bayId) } });
+    if (!bay || bay.currentWorkAssignmentId) {
+      throw createHttpError(400, 'Selected bay is not available');
+    }
+
+    // Determine department prefix from service category
+    const category = service.serviceItem?.category;
+    const deptRaw = String(category?.slug || category?.name || '').toLowerCase();
+    const isBodyShop = deptRaw.includes('body');
+    const deptPrefix = isBodyShop ? 'BODY_SHOP' : 'MECHANICAL';
+
+    const assignedServiceStatus = await tx.statusMaster.findFirst({
+      where: { statusCode: 'ASSIGNED', module: { is: { moduleCode: 'job-card-service', isActive: true } }, isActive: true }
+    });
+    if (!assignedServiceStatus) throw createHttpError(500, 'Assigned service status not configured');
+
+    const assignedAssignmentStatus = await tx.statusMaster.findFirst({
+      where: { statusCode: `${deptPrefix}_ASSIGNED`, module: { is: { moduleCode: 'work-assignment', isActive: true } }, isActive: true }
+    });
+    if (!assignedAssignmentStatus) throw createHttpError(500, `${deptPrefix}_ASSIGNED work assignment status not configured`);
+
+    // Complete the old ON_HOLD assignment
+    const oldAssignment = service.workAssignments[0];
+    if (oldAssignment) {
+      const completedStatus = await tx.statusMaster.findFirst({
+        where: { statusCode: `${deptPrefix}_COMPLETED`, module: { is: { moduleCode: 'work-assignment', isActive: true } }, isActive: true }
+      });
+      if (completedStatus) {
+        await tx.workAssignment.update({
+          where: { id: oldAssignment.id },
+          data: { completedAt: new Date(), statusId: completedStatus.id, modifiedById: user?.userId || null }
+        });
+      }
+    }
+
+    // Set service status back to ASSIGNED
+    await tx.jobCardService.update({
+      where: { id: parsedServiceId },
+      data: { serviceStatusId: assignedServiceStatus.id, modifiedById: user?.userId || null }
+    });
+
+    // Create new work assignment
+    const newAssignment = await tx.workAssignment.create({
+      data: {
+        jobCardId: parsedJobCardId,
+        jobCardServiceId: parsedServiceId,
+        assignedUserId: Number(mechanicId),
+        assignedById: user?.userId || null,
+        bayId: Number(bayId),
+        statusId: assignedAssignmentStatus.id,
+        assignedAt: new Date(),
+        createdById: user?.userId || null
+      }
+    });
+
+    // Mark bay as occupied
+    await tx.bay.update({
+      where: { id: Number(bayId) },
+      data: { currentWorkAssignmentId: newAssignment.id }
+    });
+
+    // Record service history
+    await tx.jobCardServiceHistory.create({
+      data: {
+        jobCardServiceId: parsedServiceId,
+        actionTypeId: assignedServiceStatus.id,
+        fromStatusId: service.serviceStatusId,
+        toStatusId: assignedServiceStatus.id,
+        reason: 'Service resumed from Postponed (Mobile)',
+        changedById: user?.userId || 1
+      }
+    });
+
+    // Recalculate overall job card status
+    const fullJobCard = await tx.jobCard.findUnique({
+      where: { id: parsedJobCardId },
+      include: {
+        services: {
+          include: {
+            serviceStatus: true,
+            workAssignments: { include: { status: true } },
+            approvalStatus: true,
+            serviceItem: { include: { category: true } }
+          }
+        },
+        currentStatus: true,
+        approvalStatus: true
+      }
+    });
+
+    if (fullJobCard) {
+      const newJobCardStatus = await jobCardService.deriveJobCardStatus(tx, fullJobCard);
+      if (newJobCardStatus && newJobCardStatus.id !== fullJobCard.currentStatusId) {
+        await jobCardService.syncJobCardStageTracking(tx, parsedJobCardId, fullJobCard.currentStatusId, newJobCardStatus, user);
+        await tx.jobCard.update({
+          where: { id: parsedJobCardId },
+          data: { currentStatusId: newJobCardStatus.id }
+        });
+      }
+      await syncAssignmentPendingStages(tx, { jobCard: fullJobCard, actorUserId: user?.userId || null });
+    }
+
+    return { success: true, message: 'Service resumed successfully', assignmentId: newAssignment.id };
+  }, { maxWait: 20000, timeout: 50000 });
+};
+
 module.exports = {
   pendingQueue,
   jobCardList,
@@ -2136,5 +2678,7 @@ module.exports = {
   jobCardDetail,
   createFromGateEntry,
   updateFromMobile,
+  updateJobCardServices,
+  resumeJobCardService,
   lookupVehicleByNumber
 };

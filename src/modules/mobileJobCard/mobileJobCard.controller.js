@@ -82,6 +82,38 @@ const updateJobCard = async (req, res, next) => {
   }
 };
 
+const updateJobCardServices = async (req, res, next) => {
+  try {
+    const data = await service.updateJobCardServices(req.params.id, req.body.services, req.user);
+    return apiResponse(res, {
+      message: 'Services updated successfully',
+      data
+    });
+  } catch (error) {
+    if (error.message.includes('not found') || error.message.includes('Invalid') || error.message.includes('Cannot')) {
+      return apiResponse(res, { statusCode: 400, success: false, message: error.message });
+    }
+    return next(error);
+  }
+};
+
+const resumeService = async (req, res, next) => {
+  try {
+    const { jobCardId, serviceId } = req.params;
+    const { bayId, mechanicId } = req.body;
+    if (!bayId || !mechanicId) {
+      return apiResponse(res, { statusCode: 400, success: false, message: 'bayId and mechanicId are required' });
+    }
+    const data = await service.resumeJobCardService(jobCardId, serviceId, bayId, mechanicId, req.user);
+    return apiResponse(res, {
+      message: 'Service resumed successfully',
+      data
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
 const lookupVehicle = async (req, res, next) => {
   try {
     const { vehicleNumber } = req.query;
@@ -94,7 +126,7 @@ const lookupVehicle = async (req, res, next) => {
     }
 
     const data = await service.lookupVehicleByNumber(vehicleNumber, req.user);
-    
+
     return apiResponse(res, {
       message: data ? 'Vehicle data retrieved successfully' : 'Vehicle not found',
       data
@@ -111,5 +143,7 @@ module.exports = {
   jobCardDetail,
   createFromGateEntry,
   updateJobCard,
+  updateJobCardServices,
+  resumeService,
   lookupVehicle
 };
