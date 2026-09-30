@@ -364,12 +364,26 @@ const isRejectedAdditionalService = (service) => {
   return Boolean(service && service.isAdditional && getStatusCode(service.approvalStatus) === 'REJECTED');
 };
 
+const isPendingAdditionalService = (service) => {
+  if (!service || !service.isAdditional) return false;
+  const code = getStatusCode(service.approvalStatus);
+  // Treat blank / unknown approval status on additional work as PENDING
+  return !code || code === 'PENDING';
+};
+
 const isApprovedForWork = (service) => {
   if (!service || !service.isAdditional) {
     return true;
   }
 
   return getStatusCode(service.approvalStatus) === 'APPROVED';
+};
+
+// Returns true when the job card has at least one additional service still awaiting
+// customer approval (neither APPROVED nor REJECTED yet).  Such a job card must NOT
+// be moved out of its current department.
+const hasPendingAdditionalServices = (jobCard) => {
+  return (jobCard.services || []).some(isPendingAdditionalService);
 };
 
 const isCompletedStatusCode = (statusCode) => {
@@ -432,6 +446,12 @@ const isJobCardServiceInProgress = (service) => {
 };
 
 const areAllJobCardServicesCompleted = (jobCard) => {
+  // If any additional work is still awaiting customer approval, the job card is
+  // NOT complete — it must stay in its current department until resolved.
+  if (hasPendingAdditionalServices(jobCard)) {
+    return false;
+  }
+
   const services = (jobCard.services || []).filter((service) => {
     return isApprovedForWork(service) && !isRejectedAdditionalService(service);
   });
@@ -504,6 +524,11 @@ const syncAssignmentsForServiceStatus = async (tx, service, serviceStatus, user)
     if (['REJECTED', 'CANCELLED', 'POSTPONED'].some((status) => serviceStatusCode.includes(status))) {
       return;
     }
+    // Additional work services share the parent mechanic — no explicit workAssignment
+    // record is required.  Allow the status update to proceed without one.
+    if (service.isAdditional) {
+      return;
+    }
     throw createHttpError(400, 'Service must be assigned before work status can be updated');
   }
 
@@ -554,7 +579,13 @@ const deriveJobCardStatus = async (tx, jobCard) => {
   let activeDepartment = null;
 
   for (const department of DEPARTMENT_ORDER) {
-    const services = getDepartmentServices(jobCard, department).filter(service => isApprovedForWork(service) && !isRejectedAdditionalService(service));
+    // Include both approved services AND pending-additional services for this department.
+    // Pending additional work (awaiting customer response) must block the job card from
+    // advancing — treat it as an unfinished service in its originating department.
+    const services = getDepartmentServices(jobCard, department).filter(service =>
+      (isApprovedForWork(service) && !isRejectedAdditionalService(service)) ||
+      isPendingAdditionalService(service)
+    );
     if (services.length === 0) {
       continue;
     }
@@ -580,14 +611,20 @@ const deriveJobCardStatus = async (tx, jobCard) => {
   let targetDepartment = activeDepartment || firstPostponed;
 
   if (targetDepartment) {
-    const services = getDepartmentServices(jobCard, targetDepartment).filter(service => isApprovedForWork(service) && !isRejectedAdditionalService(service));
+    // For the final status resolution only use approved (non-pending) services so we
+    // don't accidentally mark PENDING additional work as the "active uncompleted" driver
+    // (it has no serviceStatus yet — it would look like ASSIGNED not IN_PROGRESS).
+    // The department is already locked in; here we only decide assigned vs. in-progress.
+    const approvedServices = getDepartmentServices(jobCard, targetDepartment).filter(service => isApprovedForWork(service) && !isRejectedAdditionalService(service));
+    const pendingServices = getDepartmentServices(jobCard, targetDepartment).filter(isPendingAdditionalService);
 
-    // If it's a postponed department that we auto-returned to, 
-    // it shouldn't show as IN_PROGRESS unless someone actually started working on it.
-    // If all unfinished services are POSTPONED, it should be ASSIGNED.
-    const hasActiveUncompleted = services.some(service =>
-      !isJobCardServiceCompleted(service) && getStatusCode(service.serviceStatus) !== 'POSTPONED'
-    );
+    // If there are pending additional services, the job card is at minimum IN_PROGRESS
+    // in this department (original work was far enough along for additional work to be raised).
+    const hasActiveUncompleted =
+      pendingServices.length > 0 ||
+      approvedServices.some(service =>
+        !isJobCardServiceCompleted(service) && getStatusCode(service.serviceStatus) !== 'POSTPONED'
+      );
 
     if (hasActiveUncompleted) {
       return resolveRequiredStatus(
@@ -607,6 +644,38 @@ const deriveJobCardStatus = async (tx, jobCard) => {
   }
 
   return null;
+};
+
+const refreshJobCardStatus = async (tx, jobCardId, user) => {
+  const jobCard = await tx.jobCard.findUnique({
+    where: { id: jobCardId },
+    include: {
+      services: {
+        include: {
+          serviceStatus: true,
+          approvalStatus: true,
+          workAssignments: { include: { status: true } },
+          serviceItem: { include: { category: true } }
+        }
+      }
+    }
+  });
+
+  if (!jobCard) return null;
+
+  const nextStatus = await deriveJobCardStatus(tx, jobCard);
+  if (!nextStatus || nextStatus.id === jobCard.currentStatusId) return nextStatus;
+
+  await syncJobCardStageTracking(tx, jobCard.id, jobCard.currentStatusId, nextStatus, user);
+  await tx.jobCard.update({
+    where: { id: jobCard.id },
+    data: {
+      currentStatusId: nextStatus.id,
+      modifiedById: user && user.userId ? user.userId : null
+    }
+  });
+
+  return nextStatus;
 };
 
 const toBaySummary = (bay) => bay
@@ -970,7 +1039,7 @@ const JOB_CARD_INCLUDE = {
     select: { id: true, locationName: true, locationCode: true }
   },
   gateEntry: {
-    select: { id: true, entryType: true, gateEntryNo: true }
+    select: { id: true, entryType: true, gateEntryNo: true, entryTime: true }
   },
   services: {
     include: {
@@ -993,6 +1062,7 @@ const JOB_CARD_INCLUDE = {
         select: {
           id: true,
           serviceName: true,
+          isAdditional: true,
           serviceItem: {
             select: {
               category: true
@@ -1062,7 +1132,7 @@ const getJobCardById = async (id, user) => {
 
   try {
     const approvals = await prisma.$queryRaw`
-      SELECT a.id, a.approval_code AS approvalCode, a.approval_type AS approvalType, a.total_amount AS totalAmount, a.mechanic_explanation AS mechanicExplanation, a.voice_note_url AS voiceNoteUrl, a.customer_response AS customerResponse, a.sent_at AS sentAt, a.created_at AS createdAt, s.status_code AS statusCode, s.status_name AS statusName
+      SELECT a.id, a.approval_code AS approvalCode, a.approval_type AS approvalType, a.total_amount AS totalAmount, a.mechanic_explanation AS mechanicExplanation, a.voice_note_url AS voiceNoteUrl, a.customer_response AS customerResponse, a.sent_at AS sentAt, a.responded_at AS respondedAt, a.created_at AS createdAt, s.status_code AS statusCode, s.status_name AS statusName
       FROM job_card_approvals a
       LEFT JOIN status_master s ON a.status_id = s.id
       WHERE a.job_card_id = ${jobCard.id}
@@ -1074,9 +1144,10 @@ const getJobCardById = async (id, user) => {
     if (approvalIds.length > 0) {
       try {
         const approvalServices = await prisma.$queryRawUnsafe(`
-          SELECT jcs.job_card_approval_id AS approvalId, si.name AS serviceName, jcs.price, sm.status_code AS statusCode, sm.status_name AS statusName
+          SELECT jcs.job_card_approval_id AS approvalId, si.name AS serviceName, sc.slug AS categorySlug, sc.name AS categoryName, jcs.price, sm.status_code AS statusCode, sm.status_name AS statusName
           FROM job_card_services jcs
           LEFT JOIN service_items si ON jcs.service_item_id = si.id
+          LEFT JOIN service_categories sc ON sc.id = si.category_id
           LEFT JOIN status_master sm ON jcs.approval_status_id = sm.id
           WHERE jcs.job_card_approval_id IN (${approvalIds.join(',')})
         `);
@@ -2126,5 +2197,6 @@ module.exports = {
   toJobCardListResponse,
   postponeJobCardService,
   resumeJobCardService,
-  skipJobCardDepartment
+  skipJobCardDepartment,
+  refreshJobCardStatus
 };
