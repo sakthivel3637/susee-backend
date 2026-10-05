@@ -2400,7 +2400,25 @@ const updateJobCardServices = async (jobCardId, servicesPayload, user) => {
       if (!existingService) continue;
 
       if (existingService.serviceStatusId !== statusObj.id) {
-        // Validate "In Progress"
+        // 1. Completed service cannot be changed
+        const currentServiceStatus = await tx.statusMaster.findUnique({ where: { id: existingService.serviceStatusId } });
+        if (currentServiceStatus?.statusCode === 'COMPLETED') {
+          throw createHttpError(400, 'Completed service status cannot be changed');
+        }
+
+        // 2. Additional work must be customer approved before it can be started / progressed
+        if (existingService.isAdditional && ['ASSIGNED', 'IN_PROGRESS', 'COMPLETED'].includes(statusObj.statusCode)) {
+          const approval = existingService.approvalId ? await tx.jobCardApproval.findUnique({
+            where: { id: existingService.approvalId },
+            include: { status: true }
+          }) : null;
+          const approvalCode = approval?.status?.statusCode;
+          if (approvalCode !== 'APPROVED' && approvalCode !== 'CUSTOMER_APPROVED') {
+            throw createHttpError(400, 'Additional work must be customer approved before it can be started');
+          }
+        }
+
+        // 3. Validate "In Progress"
         if (statusObj.statusCode === 'IN_PROGRESS') {
           const assignment = jobCard.workAssignments.find(a => a.jobCardServiceId === serviceId);
           if (!assignment || !assignment.assignedUserId) {

@@ -97,6 +97,13 @@ async function runFcmSenderWorkflow() {
               title: notification.title,
               body: notification.message || ''
             },
+            android: {
+              notification: {
+                icon: 'ic_launcher',
+                color: '#000F7E',
+                channelId: 'default'
+              }
+            },
             data: {
               notificationId: String(notification.id),
               gateEntryId: String(notification.gateEntryId || ''),

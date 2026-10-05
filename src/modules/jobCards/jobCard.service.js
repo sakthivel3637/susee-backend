@@ -1216,12 +1216,12 @@ const getJobCardById = async (id, user) => {
     if (approvalIds.length > 0) {
       try {
         const approvalServices = await prisma.$queryRawUnsafe(`
-          SELECT jcs.job_card_approval_id AS approvalId, si.name AS serviceName, sc.slug AS categorySlug, sc.name AS categoryName, jcs.price, sm.status_code AS statusCode, sm.status_name AS statusName
+          SELECT jcs.approval_id AS approvalId, si.name AS serviceName, sc.slug AS categorySlug, sc.name AS categoryName, jcs.price, sm.status_code AS statusCode, sm.status_name AS statusName
           FROM job_card_services jcs
           LEFT JOIN service_items si ON jcs.service_item_id = si.id
           LEFT JOIN service_categories sc ON sc.id = si.category_id
           LEFT JOIN status_master sm ON jcs.approval_status_id = sm.id
-          WHERE jcs.job_card_approval_id IN (${approvalIds.join(',')})
+          WHERE jcs.approval_id IN (${approvalIds.join(',')})
         `);
         const serviceMap = new Map();
         for (const s of (approvalServices || [])) {
