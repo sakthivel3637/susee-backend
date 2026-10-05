@@ -47,6 +47,13 @@ const getJobCards = async (req, res, next) => {
       meta: result.meta
     });
   } catch (error) {
+    console.error('[getJobCards ERROR]', {
+      message: error.message,
+      code: error.code,
+      meta: error.meta,
+      stack: error.stack,
+      query: req.query
+    });
     return next(error);
   }
 };
