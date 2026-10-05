@@ -779,7 +779,61 @@ const getTvKioskDashboard = async ({ locationId } = {}) => {
     };
   });
 
-  return queue;
+  // ── Vehicles delivered today ──────────────────────────────────────────────
+  // A vehicle is "delivered today" when its gate entry exitTime falls within
+  // today's date range AND the linked job card's currentStatus is DELIVERED.
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayEnd = new Date();
+  todayEnd.setHours(23, 59, 59, 999);
+
+  const exitedEntries = await prisma.gateEntry.findMany({
+    where: {
+      ...(locationId ? { locationId } : {}),
+      exitTime: {
+        gte: todayStart,
+        lte: todayEnd
+      },
+      jobCards: {
+        some: {
+          currentStatus: {
+            statusCode: 'DELIVERED'
+          }
+        }
+      }
+    },
+    include: {
+      customer: {
+        select: { id: true, fullName: true }
+      },
+      vehicle: {
+        include: { brand: true }
+      },
+      jobCards: {
+        where: {
+          currentStatus: {
+            statusCode: 'DELIVERED'
+          }
+        },
+        select: {
+          id: true,
+          jobCardNo: true
+        },
+        take: 1
+      }
+    },
+    orderBy: { exitTime: 'desc' }
+  });
+
+  const deliveredToday = exitedEntries.map(entry => ({
+    id: entry.jobCards[0]?.jobCardNo || `GE-${entry.id}`,
+    vehicleNumber: entry.vehicle?.registrationNo || 'N/A',
+    customerName: entry.customer?.fullName || 'Unknown',
+    vehicleInfo: `${entry.vehicle?.brand?.name || ''} ${entry.vehicle?.model || ''}`.trim() || 'Unknown',
+    exitTime: entry.exitTime
+  }));
+
+  return { queue, deliveredToday };
 };
 
 module.exports = {

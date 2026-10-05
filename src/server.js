@@ -9,6 +9,7 @@ const { initializeTwilio } = require('./config/twilio');
 const { startFcmSenderJob } = require('./jobs/fcm-sender.job');
 const { startApprovalFollowupJob } = require('./jobs/approval-followup.job');
 const { startProcessStageDelayMonitorJob } = require('./jobs/process-stage-delay-monitor.job');
+const { startUnassignedMechanicMonitorJob } = require('./jobs/unassigned-mechanic-monitor.job');
 
 const server = http.createServer(app);
 
@@ -24,6 +25,7 @@ const startServer = async () => {
     // Start background jobs
     startApprovalFollowupJob();
     startProcessStageDelayMonitorJob();
+    startUnassignedMechanicMonitorJob();
     
     try {
       startFcmSenderJob();
