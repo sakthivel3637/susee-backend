@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const prisma = require('../config/db');
 const { findStageTimeLimit } = require('../modules/processStageTracking/processStageTracking.service');
+const { getSocket } = require('../config/socket');
 
 let isRegistered = false;
 let isProcessing = false;
@@ -80,7 +81,8 @@ async function runProcessStageDelayMonitorWorkflow() {
         jobCard: {
           select: {
             id: true,
-            jobCardNo: true
+            jobCardNo: true,
+            slug: true
           }
         },
         vehicle: {
@@ -163,6 +165,20 @@ async function runProcessStageDelayMonitorWorkflow() {
             retryCount: 0
           }))
         });
+
+        const io = getSocket();
+        if (io) {
+          recipients.forEach((userId) => {
+            io.to(`user:${userId}`).emit('notification-created', {
+              title: notification.title,
+              message: notification.message,
+              type: 'DELAY_ALERT',
+              jobCardId: stage.jobCardId,
+              jobCardSlug: stage.jobCard?.slug || null,
+              processStageTrackingId: stage.id
+            });
+          });
+        }
 
         notificationsCreated += recipients.length;
       });

@@ -2,6 +2,7 @@ const cron = require('node-cron');
 const prisma = require('../config/db');
 const { resolveStatus } = require('../common/utils/status.util');
 const { STATUS_MODULE_CODES, JOB_CARD_STATUS_CODES } = require('../common/constants/status.constants');
+const { getSocket } = require('../config/socket');
 
 let isRegistered = false;
 let isProcessing = false;
@@ -141,6 +142,19 @@ async function runJobCardDeliveryMonitorWorkflow() {
                 retryCount: 0
               }))
             });
+
+            const io = getSocket();
+            if (io) {
+              recipients.forEach((userId) => {
+                io.to(`user:${userId}`).emit('notification-created', {
+                  title: title,
+                  message: message,
+                  type: 'DELIVERY_DELAY_ALERT',
+                  jobCardId: jobCard.id,
+                  jobCardSlug: jobCard.slug || null
+                });
+              });
+            }
 
             notificationsCreated += recipients.length;
           }

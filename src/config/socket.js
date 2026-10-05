@@ -14,6 +14,13 @@ const initializeSocket = (httpServer) => {
   io.on('connection', (socket) => {
     console.info(`Socket connected: ${socket.id}`);
 
+    socket.on('join_user_room', (userId) => {
+      if (userId) {
+        socket.join(`user:${userId}`);
+        console.info(`[Socket] User ${userId} joined room user:${userId} (socket: ${socket.id})`);
+      }
+    });
+
     socket.on('disconnect', () => {
       console.info(`Socket disconnected: ${socket.id}`);
     });

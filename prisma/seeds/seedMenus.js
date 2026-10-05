@@ -55,6 +55,7 @@ const MENU_SEED_DATA = [
       { name: 'Customers', path: '/customers', icon: 'Users' },
       { name: 'Vehicles', path: '/vehicles', icon: 'Car' },
       { name: 'Job Cards', path: '/job-cards', icon: 'ClipboardList' },
+      { name: 'Assign Mechanic', path: '/assign-mechanic', icon: 'User' },
       { name: 'Notifications', path: '/notifications', icon: 'Bell' },
       { name: 'TV Display', path: '/kiosk/tv', icon: 'Monitor' }
     ]
@@ -69,6 +70,7 @@ const MENU_SEED_DATA = [
       { name: 'Customers', path: '/customers', icon: 'Users' },
       { name: 'Vehicles', path: '/vehicles', icon: 'Car' },
       { name: 'Job Cards', path: '/job-cards', icon: 'ClipboardList' },
+      { name: 'Assign Mechanic', path: '/assign-mechanic', icon: 'User' },
       { name: 'Vehicle Entry', path: '/gate-entry', icon: 'LogIn' },
       { name: 'Notifications', path: '/notifications', icon: 'Bell' },
       // { name: 'System Settings', path: '/system-settings', icon: 'Settings' },
@@ -128,6 +130,10 @@ const seedMenus = async (prisma) => {
   }
 
   for (const moduleMenu of MENU_SEED_DATA) {
+    const role = await prisma.role.findUnique({
+      where: { slug: moduleMenu.module }
+    });
+
     for (const [index, menu] of moduleMenu.menus.entries()) {
       const parent = await prisma.menu.upsert({
         where: {
@@ -154,8 +160,32 @@ const seedMenus = async (prisma) => {
         }
       });
 
+      if (role) {
+        await prisma.roleMenuPermission.upsert({
+          where: {
+            roleId_menuId: {
+              roleId: role.id,
+              menuId: parent.id
+            }
+          },
+          update: {
+            canRead: true,
+            canCreate: true,
+            canUpdate: true
+          },
+          create: {
+            roleId: role.id,
+            menuId: parent.id,
+            canRead: true,
+            canCreate: true,
+            canUpdate: true,
+            canDelete: false
+          }
+        });
+      }
+
       for (const [childIndex, child] of (menu.children || []).entries()) {
-        await prisma.menu.upsert({
+        const childMenu = await prisma.menu.upsert({
           where: {
             module_path: {
               module: moduleMenu.module,
@@ -179,6 +209,30 @@ const seedMenus = async (prisma) => {
             isActive: true
           }
         });
+
+        if (role) {
+          await prisma.roleMenuPermission.upsert({
+            where: {
+              roleId_menuId: {
+                roleId: role.id,
+                menuId: childMenu.id
+              }
+            },
+            update: {
+              canRead: true,
+              canCreate: true,
+              canUpdate: true
+            },
+            create: {
+              roleId: role.id,
+              menuId: childMenu.id,
+              canRead: true,
+              canCreate: true,
+              canUpdate: true,
+              canDelete: false
+            }
+          });
+        }
       }
     }
   }
