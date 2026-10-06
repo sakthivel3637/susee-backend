@@ -76,78 +76,8 @@ const startStage = async ({
     }
   });
 
-  const fullLimit = await db.stageTimeLimit.findUnique({
-    where: { id: limit.id },
-    include: { recipients: true }
-  });
-
-  console.info(`[startStage] Recipients in limit: ${fullLimit?.recipients?.length || 0}`);
-
-  if (fullLimit && fullLimit.recipients && fullLimit.recipients.length > 0) {
-    const userIds = new Set();
-    const roleIds = new Set();
-
-    fullLimit.recipients.forEach(r => {
-      if (r.userId) userIds.add(r.userId);
-      if (r.roleId) roleIds.add(r.roleId);
-    });
-
-    console.info(`[startStage] Direct userIds: ${userIds.size}, roleIds: ${roleIds.size}`);
-
-    if (roleIds.size > 0) {
-      const users = await db.user.findMany({
-        where: {
-          roleId: { in: Array.from(roleIds) },
-          locationId: newStage.locationId,
-          isActive: true
-        },
-        select: { id: true }
-      });
-      users.forEach(u => userIds.add(u.id));
-      console.info(`[startStage] Users resolved from roles: ${users.length}`);
-    }
-
-    const recipientsList = Array.from(userIds);
-    console.info(`[startStage] Total recipients: ${recipientsList.length}`);
-
-    if (recipientsList.length > 0) {
-      const statusName = newStage.status?.statusName || newStage.status?.statusCode || 'Process stage';
-      const vehicleNo = newStage.vehicle?.registrationNo ? ` for ${newStage.vehicle.registrationNo}` : '';
-      const reference = newStage.jobCard?.jobCardNo || newStage.gateEntry?.gateEntryNo || `stage #${newStage.id}`;
-
-      await db.notification.createMany({
-        data: recipientsList.map((userId) => ({
-          userId,
-          title: `${statusName}`,
-          message: `${statusName}${vehicleNo} has been started. Reference: ${reference}.`,
-          type: 'START_ALERT',
-          locationId: newStage.locationId,
-          gateEntryId: newStage.gateEntryId,
-          jobCardId: newStage.jobCardId,
-          processStageTrackingId: newStage.id,
-          sentAt: null,
-          retryCount: 0
-        }))
-      });
-
-      const io = getSocket();
-      console.info(`[startStage] Socket io available: ${!!io}`);
-      if (io) {
-        recipientsList.forEach((userId) => {
-          console.info(`[startStage] Emitting notification-created to user:${userId}`);
-          io.to(`user:${userId}`).emit('notification-created', {
-            title: `${statusName}`,
-            message: `${statusName}${vehicleNo} has been started. Reference: ${reference}.`,
-            type: 'START_ALERT',
-            jobCardId: newStage.jobCardId,
-            jobCardSlug: newStage.jobCard?.slug || null,
-            processStageTrackingId: newStage.id
-          });
-        });
-      }
-    }
-  }
-
+  // Start Alert notification removed upon request:
+  // Notifications are now ONLY generated when stage schedule time limits expire (DELAY_ALERT).
   return newStage;
 };
 
@@ -193,78 +123,8 @@ const completeStage = async ({
     }
   });
 
-  // Stage Schedules logic for completion notifications
-  const limit = await findStageTimeLimit(db, {
-    locationId: updatedStage.locationId,
-    moduleId: updatedStage.moduleId,
-    statusId: updatedStage.statusId
-  });
-
-  if (limit) {
-    const fullLimit = await db.stageTimeLimit.findUnique({
-      where: { id: limit.id },
-      include: { recipients: true }
-    });
-
-    if (fullLimit && fullLimit.recipients && fullLimit.recipients.length > 0) {
-      const userIds = new Set();
-      const roleIds = new Set();
-
-      fullLimit.recipients.forEach(r => {
-        if (r.userId) userIds.add(r.userId);
-        if (r.roleId) roleIds.add(r.roleId);
-      });
-
-      if (roleIds.size > 0) {
-        const users = await db.user.findMany({
-          where: {
-            roleId: { in: Array.from(roleIds) },
-            locationId: updatedStage.locationId,
-            isActive: true
-          },
-          select: { id: true }
-        });
-        users.forEach(u => userIds.add(u.id));
-      }
-
-      const recipientsList = Array.from(userIds);
-      if (recipientsList.length > 0) {
-        const statusName = updatedStage.status?.statusName || updatedStage.status?.statusCode || 'Process stage';
-        const vehicleNo = updatedStage.vehicle?.registrationNo ? ` for ${updatedStage.vehicle.registrationNo}` : '';
-        const reference = updatedStage.jobCard?.jobCardNo || updatedStage.gateEntry?.gateEntryNo || `stage #${updatedStage.id}`;
-
-        await db.notification.createMany({
-          data: recipientsList.map((userId) => ({
-            userId,
-            title: `${statusName} Completed`,
-            message: `${statusName}${vehicleNo} has been marked as completed. Reference: ${reference}.`,
-            type: 'COMPLETION_ALERT',
-            locationId: updatedStage.locationId,
-            gateEntryId: updatedStage.gateEntryId,
-            jobCardId: updatedStage.jobCardId,
-            processStageTrackingId: updatedStage.id,
-            sentAt: null,
-            retryCount: 0
-          }))
-        });
-
-        const io = getSocket();
-        if (io) {
-          recipientsList.forEach((userId) => {
-            io.to(`user:${userId}`).emit('notification-created', {
-              title: `${statusName} Completed`,
-              message: `${statusName}${vehicleNo} has been marked as completed. Reference: ${reference}.`,
-              type: 'COMPLETION_ALERT',
-              jobCardId: updatedStage.jobCardId,
-              jobCardSlug: updatedStage.jobCard?.slug || null,
-              processStageTrackingId: updatedStage.id
-            });
-          });
-        }
-      }
-    }
-  }
-
+  // Completion Alert notification removed upon request:
+  // Notifications are now ONLY generated when stage schedule time limits expire (DELAY_ALERT).
   return updatedStage;
 };
 

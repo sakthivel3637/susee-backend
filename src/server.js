@@ -23,7 +23,7 @@ const startServer = async () => {
     console.info('Database connection established through Prisma.');
 
     // Start background jobs
-    startApprovalFollowupJob();
+    // startApprovalFollowupJob(); // Disabled: Additional Work / Approval Timeout notifications
     startProcessStageDelayMonitorJob();
     startUnassignedMechanicMonitorJob();
     
