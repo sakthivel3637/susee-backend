@@ -11,8 +11,11 @@ const isInvalidTokenError = (err) => {
 
   return err.code === 'messaging/registration-token-not-registered'
     || err.code === 'messaging/invalid-registration-token'
+    || err.code === 'messaging/mismatched-credential'
     || message.includes('registration-token-not-registered')
     || message.includes('invalid-registration-token')
+    || message.includes('SenderId mismatch')
+    || message.includes('mismatched-credential')
     || message.includes('not a valid FCM registration token')
     || message.includes('invalid-argument');
 };

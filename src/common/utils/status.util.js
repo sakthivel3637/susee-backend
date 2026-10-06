@@ -5,10 +5,8 @@ const normalizeModuleCode = (moduleCode) => String(moduleCode || '').trim().toLo
 
 const moduleWhere = (moduleCode) => ({
   module: {
-    is: {
-      moduleCode: normalizeModuleCode(moduleCode),
-      isActive: true
-    }
+    moduleCode: normalizeModuleCode(moduleCode),
+    isActive: true
   }
 });
 

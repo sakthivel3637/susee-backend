@@ -852,14 +852,19 @@ const listJobCards = async (query, user) => {
 
   if (query.status) {
     const statusCodes = String(query.status).split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
-    where.currentStatus = {
-      is: {
-        ...(statusCodes.length === 1
-          ? { statusCode: statusCodes[0] }
-          : { statusCode: { in: statusCodes } }),
-        ...statusModuleFilter(STATUS_MODULE_CODES.JOB_CARD_STATUS)
-      }
-    };
+    const matchingStatuses = await prisma.statusMaster.findMany({
+      where: {
+        statusCode: { in: statusCodes },
+        isActive: true,
+        module: {
+          moduleCode: STATUS_MODULE_CODES.JOB_CARD_STATUS,
+          isActive: true
+        }
+      },
+      select: { id: true }
+    });
+    const statusIds = matchingStatuses.map((s) => s.id);
+    where.currentStatusId = statusIds.length > 0 ? { in: statusIds } : -1;
   }
 
   if (query.fromDate || query.toDate) {

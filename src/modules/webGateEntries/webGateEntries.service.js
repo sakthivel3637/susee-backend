@@ -19,7 +19,7 @@ const list = async (query, user) => {
       { customer: { mobileNo: { contains: query.search } } }
     ];
   }
-  
+
   if (query.status) {
     where.status = {
       is: {
@@ -28,7 +28,7 @@ const list = async (query, user) => {
       }
     };
   }
-  
+
   if (query.serviceType) {
     where.entryType = query.serviceType;
   }
@@ -110,9 +110,9 @@ const getBySlug = async (slugOrId, user) => {
       location: true
     }
   });
-  
+
   if (!entry) throw new Error('Gate entry not found');
-  
+
   return {
     id: entry.id.toString(),
     slug: entry.slug,

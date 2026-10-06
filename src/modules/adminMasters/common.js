@@ -668,6 +668,7 @@ const createAdminMasterRoutes = ({ controller, validation, menuPath }) => {
 
 module.exports = {
   prisma,
+  apiResponse,
   createHttpError,
   parsePositiveInt,
   parseBooleanFilter,
@@ -678,6 +679,7 @@ module.exports = {
   ensureForeignKey,
   ensureUniqueComposite,
   ensureUniqueField,
+  resolveSlug,
   normalizeRequiredString,
   normalizeNullableString
 };
