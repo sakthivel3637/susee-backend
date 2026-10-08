@@ -110,13 +110,23 @@ baseService.importServiceItems = async (fileBuffer, actorUserId) => {
       const name = getVal(1);
       const categoryName = getVal(2);
       const priceRaw = getVal(3);
+      const estimatedTimeRaw = getVal(4);
+      const descriptionRaw = getVal(5);
+      const statusRaw = getVal(6);
 
       if (name && categoryName) {
+        const parsedMinutes = estimatedTimeRaw ? parseInt(estimatedTimeRaw, 10) : null;
+        const normStatus = String(statusRaw || '').trim().toLowerCase();
+        const isActive = normStatus === 'inactive' || normStatus === 'false' || normStatus === '0' ? false : true;
+
         rows.push({
           rowNumber,
           name,
           categoryName,
-          price: priceRaw || '0'
+          price: priceRaw || '0',
+          estimatedMinutes: isNaN(parsedMinutes) ? null : parsedMinutes,
+          description: descriptionRaw || null,
+          isActive
         });
       }
     }
@@ -177,8 +187,10 @@ baseService.importServiceItems = async (fileBuffer, actorUserId) => {
           categoryId: category.id,
           name: item.name,
           slug: itemSlug,
+          description: item.description,
           defaultPrice: item.price,
-          isActive: true,
+          estimatedMinutes: item.estimatedMinutes,
+          isActive: item.isActive,
           createdById: actorUserId || null
         }
       });

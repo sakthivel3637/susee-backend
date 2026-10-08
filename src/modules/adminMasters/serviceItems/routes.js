@@ -13,6 +13,7 @@ const router = createAdminMasterRoutes({
   menuPath: '/master-items'
 });
 
+router.get('/export-template', canCreate, controller.downloadTemplate);
 router.post('/import', canCreate, upload.single('file'), controller.importItems);
 
 module.exports = router;
