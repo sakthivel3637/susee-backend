@@ -63,7 +63,13 @@ async function runFcmSenderWorkflow() {
           include: {
             deviceTokens: {
               where: {
-                isActive: true
+                isActive: true,
+                platform: {
+                  in: ['android', 'ios', 'ANDROID', 'IOS']
+                }
+              },
+              orderBy: {
+                updatedAt: 'desc'
               }
             }
           }
@@ -74,10 +80,16 @@ async function runFcmSenderWorkflow() {
 
     for (const notification of notifications) {
       processedCount++;
-      const tokens = notification.user?.deviceTokens || [];
+      const allTokens = notification.user?.deviceTokens || [];
+      const seenTokens = new Set();
+      const tokens = allTokens.filter(t => {
+        if (!t.token || seenTokens.has(t.token)) return false;
+        seenTokens.add(t.token);
+        return true;
+      });
 
       if (tokens.length === 0) {
-        console.warn(`[FCM Sender Job] Notification ${notification.id} skipped: User ${notification.userId} has no active device tokens.`);
+        console.warn(`[FCM Sender Job] Notification ${notification.id} skipped: User ${notification.userId} has no active mobile device tokens.`);
         await markNotificationFailure(
           notification.id,
           'NO_ACTIVE_DEVICE_TOKEN',
@@ -91,6 +103,7 @@ async function runFcmSenderWorkflow() {
       let temporaryFailureCount = 0;
       let invalidTokenCount = 0;
       let lastFailureReason = null;
+      const collapseTag = `dvsos_${notification.jobCardId || notification.gateEntryId || notification.id}`;
 
       for (const tokenEntity of tokens) {
         try {
@@ -101,10 +114,12 @@ async function runFcmSenderWorkflow() {
               body: notification.message || ''
             },
             android: {
+              collapseKey: collapseTag,
               notification: {
                 icon: 'ic_launcher',
                 color: '#000F7E',
-                channelId: 'default'
+                channelId: 'default',
+                tag: collapseTag
               }
             },
             data: {

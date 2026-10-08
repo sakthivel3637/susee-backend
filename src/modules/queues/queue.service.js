@@ -21,7 +21,6 @@ const syncJobCardStageTracking = async (tx, jobCardId, oldStatusId, newStatusId,
   if (oldStatusId) {
     await completeStage({
       jobCardId: jobCard.id,
-      moduleId: newStatus.moduleId,
       statusId: oldStatusId,
       modifiedById: user?.userId || null
     }, tx);
@@ -326,6 +325,8 @@ const queueJobCardSelect = {
   jobCardNo: true,
   expectedDeliveryAt: true,
   createdAt: true,
+  currentStatusId: true,
+  approvalStatusId: true,
   currentStatus: {
     select: {
       id: true,
@@ -1211,11 +1212,20 @@ const updateAssignmentStatus = async (assignmentId, payload, user) => {
         // });
       }
 
-      if (latestJobCard && isDepartmentComplete) {
-        await syncAssignmentPendingStages(tx, {
-          jobCard: latestJobCard,
-          actorUserId: user && user.userId ? user.userId : null
+      if (isDepartmentComplete) {
+        const refreshedJobCard = await tx.jobCard.findUnique({
+          where: {
+            id: assignment.jobCardId
+          },
+          select: queueJobCardSelect
         });
+
+        if (refreshedJobCard) {
+          await syncAssignmentPendingStages(tx, {
+            jobCard: refreshedJobCard,
+            actorUserId: user && user.userId ? user.userId : null
+          });
+        }
       }
     } else {
       if (jobCardStatusId && jobCard.currentStatusId !== jobCardStatusId) {

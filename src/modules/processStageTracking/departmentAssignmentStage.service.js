@@ -135,15 +135,6 @@ const areDepartmentServicesCompleted = (jobCard, department) => {
   return services.length === 0 || services.every(isJobCardServiceCompleted);
 };
 
-const isDepartmentSkipped = (jobCard, department) => {
-  if (!jobCard || !jobCard.processStageTrackings) {
-    return false;
-  }
-  const expectedStatusCode = ASSIGNMENT_PENDING_STATUS_CODES[department];
-  const tracking = jobCard.processStageTrackings.find((t) => getStatusCode(t.status) === expectedStatusCode);
-  return tracking && String(tracking.stageStatus).trim().toUpperCase() === 'SKIPPED';
-};
-
 const isDepartmentPostponed = (jobCard, department) => {
   const services = getDepartmentServices(jobCard, department).filter((service) => {
     return isApprovedForWork(service) && !isRejectedAdditionalService(service);
@@ -174,13 +165,16 @@ const canStartAssignmentPendingForDepartment = (jobCard, department) => {
     return false;
   }
 
+  if (isDepartmentPostponed(jobCard, department)) {
+    return false;
+  }
+
   const otherDepartments = DEPARTMENT_ORDER.filter((d) => d !== department);
 
   return otherDepartments.every((otherDept) => {
     if (!hasDepartmentServicesAvailableForWork(jobCard, otherDept)) return true;
     if (areDepartmentServicesCompleted(jobCard, otherDept)) return true;
     if (isDepartmentPostponed(jobCard, otherDept)) return true;
-    if (isDepartmentSkipped(jobCard, otherDept)) return true;
 
     if (areDepartmentServicesAssigned(jobCard, otherDept)) {
       return false;
@@ -231,6 +225,13 @@ const startDepartmentAssignmentPendingStage = async (tx, { jobCard, department, 
   }
 
   if (jobCard.currentStatusId !== status.id) {
+    if (jobCard.id) {
+      await completeStage({
+        jobCardId: jobCard.id,
+        modifiedById: createdById
+      }, tx);
+    }
+
     await tx.jobCard.update({
       where: { id: jobCard.id },
       data: {
@@ -316,7 +317,7 @@ const cancelDepartmentAssignmentPendingStage = async (tx, { jobCard, department,
 
 const syncAssignmentPendingStages = async (tx, { jobCard, actorUserId = null }) => {
   for (const department of DEPARTMENT_ORDER) {
-    if (!hasDepartmentServicesAvailableForWork(jobCard, department)) {
+    if (!hasDepartmentServicesAvailableForWork(jobCard, department) || isDepartmentPostponed(jobCard, department)) {
       await cancelDepartmentAssignmentPendingStage(tx, {
         jobCard,
         department,

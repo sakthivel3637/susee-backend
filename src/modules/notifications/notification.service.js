@@ -1,4 +1,5 @@
 const prisma = require('../../config/db');
+const { getSocket } = require('../../config/socket');
 
 async function upsertDeviceToken(userId, { token, platform = null, deviceId = null }) {
   const normalizedDeviceId = String(deviceId || '').trim();
@@ -97,7 +98,12 @@ async function getUserNotifications(userId, limit = 20, offset = 0, unreadOnly =
     })
   ]);
 
-  return { notifications, total };
+  const formattedNotifications = notifications.map((n) => ({
+    ...n,
+    isRead: Boolean(n.readAt)
+  }));
+
+  return { notifications: formattedNotifications, total };
 }
 
 async function countUnread(userId) {
@@ -123,17 +129,36 @@ async function markAsRead(userId, notificationId) {
     throw error;
   }
 
-  return prisma.notification.update({
+  const updated = await prisma.notification.update({
     where: { id: notificationId },
     data: { readAt: new Date() }
   });
+
+  try {
+    const unreadCount = await countUnread(userId);
+    const io = getSocket();
+    if (io) {
+      io.to(`user:${userId}`).emit('notification-read', {
+        notificationId: updated.id,
+        jobCardId: updated.jobCardId,
+        gateEntryId: updated.gateEntryId,
+        processStageTrackingId: updated.processStageTrackingId,
+        readAt: updated.readAt,
+        unreadCount
+      });
+    }
+  } catch (socketErr) {
+    console.warn('Failed to emit notification-read socket event:', socketErr?.message);
+  }
+
+  return updated;
 }
 
 /**
  * Mark all notifications as read for a user.
  */
 async function markAllAsRead(userId) {
-  return prisma.notification.updateMany({
+  const result = await prisma.notification.updateMany({
     where: {
       userId,
       readAt: null
@@ -142,6 +167,20 @@ async function markAllAsRead(userId) {
       readAt: new Date()
     }
   });
+
+  try {
+    const io = getSocket();
+    if (io) {
+      io.to(`user:${userId}`).emit('notification-read-all', {
+        readAt: new Date(),
+        unreadCount: 0
+      });
+    }
+  } catch (socketErr) {
+    console.warn('Failed to emit notification-read-all socket event:', socketErr?.message);
+  }
+
+  return result;
 }
 
 /**

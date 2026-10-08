@@ -3,7 +3,7 @@ const { getSocket } = require('../../config/socket');
 const { STATUS_MODULE_CODES, statusModuleFilter, resolveStatusById, resolveStatusFromCodes, resolveStatusIdFromCodes } = require('../../common/utils/status.util');
 const { normalizeVehicleNumber } = require('../../utils/normalizeVehicleNumber');
 const { createAuditLog } = require('../../common/utils/audit.util');
-const { syncAssignmentPendingStages } = require('../processStageTracking/departmentAssignmentStage.service');
+const { syncAssignmentPendingStages, skipDepartmentAssignmentPendingStage } = require('../processStageTracking/departmentAssignmentStage.service');
 const { startStage, completeStage } = require('../processStageTracking/processStageTracking.service');
 const { createStorageProvider } = require('../../providers/storage/storage.provider');
 
@@ -16,7 +16,6 @@ const syncJobCardStageTracking = async (tx, jobCardId, oldStatusId, newStatus, u
   if (oldStatusId) {
     await completeStage({
       jobCardId: jobCard.id,
-      moduleId: newStatus.moduleId,
       statusId: oldStatusId,
       modifiedById: user?.userId || null
     }, tx);
@@ -76,6 +75,10 @@ const ASSIGNMENT_STATUS_CODES = {
     inProgress: ['BODY_SHOP_IN_PROGRESS'],
     completed: ['BODY_SHOP_COMPLETED']
   }
+};
+const ASSIGNMENT_PENDING_STATUS_CODES = {
+  mechanical: 'MECHANICAL_ASSIGNMENT_PENDING',
+  'body-shop': 'BODY_SHOP_ASSIGNMENT_PENDING'
 };
 const READY_FOR_DELIVERY_STATUS_CODES = ['READY_FOR_DELIVERY'];
 const FINAL_JOB_CARD_STATUS_CODES = ['DELIVERED', 'REJECTED'];
@@ -412,6 +415,10 @@ const getDepartmentServices = (jobCard, department) => {
   return (jobCard.services || []).filter((service) => getServiceDepartment(service) === department);
 };
 
+const hasAssignment = (service) => {
+  return (service && service.workAssignments || []).length > 0;
+};
+
 const isJobCardServiceCompleted = (service) => {
   if (isRejectedAdditionalService(service)) {
     return true;
@@ -611,22 +618,35 @@ const deriveJobCardStatus = async (tx, jobCard) => {
   let targetDepartment = activeDepartment || firstPostponed;
 
   if (targetDepartment) {
-    // For the final status resolution only use approved (non-pending) services so we
-    // don't accidentally mark PENDING additional work as the "active uncompleted" driver
-    // (it has no serviceStatus yet — it would look like ASSIGNED not IN_PROGRESS).
-    // The department is already locked in; here we only decide assigned vs. in-progress.
+    // For the final status resolution only use approved (non-pending) services
     const approvedServices = getDepartmentServices(jobCard, targetDepartment).filter(service => isApprovedForWork(service) && !isRejectedAdditionalService(service));
     const pendingServices = getDepartmentServices(jobCard, targetDepartment).filter(isPendingAdditionalService);
 
-    // If there are pending additional services, the job card is at minimum IN_PROGRESS
-    // in this department (original work was far enough along for additional work to be raised).
-    const hasActiveUncompleted =
-      pendingServices.length > 0 ||
-      approvedServices.some(service =>
-        !isJobCardServiceCompleted(service) && getStatusCode(service.serviceStatus) !== 'POSTPONED'
-      );
+    // If no services are assigned yet, the job card is waiting for assignment in this department
+    const isAssigned = approvedServices.length > 0 && approvedServices.some(hasAssignment);
 
-    if (hasActiveUncompleted) {
+    if (!isAssigned) {
+      return resolveRequiredStatus(
+        tx,
+        STATUS_MODULE_CODES.JOB_CARD_STATUS,
+        [ASSIGNMENT_PENDING_STATUS_CODES[targetDepartment]],
+        `${targetDepartment} job card assignment pending`
+      );
+    }
+
+    // If there are pending additional services or work has actively started/in-progress
+    const hasActiveInProgress =
+      pendingServices.length > 0 ||
+      approvedServices.some(service => {
+        const statusCode = getStatusCode(service.serviceStatus);
+        const hasStartedAssignment = (service.workAssignments || []).some(a => {
+          const aCode = getStatusCode(a.status);
+          return a.startedAt || isInProgressStatusCode(aCode);
+        });
+        return isInProgressStatusCode(statusCode) || hasStartedAssignment;
+      });
+
+    if (hasActiveInProgress) {
       return resolveRequiredStatus(
         tx,
         STATUS_MODULE_CODES.JOB_CARD_STATUS,
@@ -762,15 +782,29 @@ const toJobCardListResponse = (jobCard, department, bayMap = new Map()) => {
   const allAssignments = (jobCard.workAssignments || []).map((assignment) => toAssignmentSummary(assignment, bayMap));
   const activeAssignments = allAssignments.filter((assignment) => !assignment.completedAt);
   const displayAssignments = allAssignments;
-  const departmentAssignments = department && department.length > 0
+
+  const currentStatusCode = String(jobCard.currentStatus?.statusCode || '').toUpperCase();
+  const effectiveDept = (department && department.length > 0)
+    ? department
+    : (currentStatusCode.includes('BODY_SHOP')
+        ? ['body-shop']
+        : (currentStatusCode.includes('MECHANICAL')
+            ? ['mechanical']
+            : null));
+
+  const departmentAssignments = effectiveDept && effectiveDept.length > 0
     ? displayAssignments.filter((assignment) => {
       const assignmentDept = normalizeDepartment(assignment.service && assignment.service.category && (assignment.service.category.slug || assignment.service.category.name));
-      return department.includes(assignmentDept);
+      return effectiveDept.includes(assignmentDept);
     })
     : displayAssignments;
+
+  const activeDeptAssignments = departmentAssignments.filter((a) => !a.completedAt);
+  const targetAssignments = activeDeptAssignments.length > 0 ? activeDeptAssignments : departmentAssignments;
+
   const assignedMechanics = Array.from(
     new Map(
-      departmentAssignments
+      targetAssignments
         .filter((assignment) => assignment.assignedUser)
         .map((assignment) => [assignment.assignedUser.id, assignment.assignedUser])
     ).values()
@@ -778,7 +812,7 @@ const toJobCardListResponse = (jobCard, department, bayMap = new Map()) => {
   const assignedMechanic = assignedMechanics[0] || null;
   const assignedBays = Array.from(
     new Map(
-      departmentAssignments
+      targetAssignments
         .filter((assignment) => assignment.bay)
         .map((assignment) => [assignment.bay.id, assignment.bay])
     ).values()
@@ -865,6 +899,32 @@ const listJobCards = async (query, user) => {
     });
     const statusIds = matchingStatuses.map((s) => s.id);
     where.currentStatusId = statusIds.length > 0 ? { in: statusIds } : -1;
+
+    if (statusCodes.some((code) => code.includes('BODY_SHOP'))) {
+      where.workAssignments = {
+        some: {
+          jobCardService: {
+            serviceItem: {
+              category: {
+                slug: { in: ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'painting', 'denting', 'tinkering', 'collision'] }
+              }
+            }
+          }
+        }
+      };
+    } else if (statusCodes.some((code) => code.includes('MECHANICAL'))) {
+      where.workAssignments = {
+        some: {
+          jobCardService: {
+            serviceItem: {
+              category: {
+                slug: { in: ['mechanical', 'mechanic', 'mechnanic', 'floor', 'general-service', 'general service', 'engine', 'electrical'] }
+              }
+            }
+          }
+        }
+      };
+    }
   }
 
   if (query.fromDate || query.toDate) {
@@ -2238,13 +2298,21 @@ const skipJobCardDepartment = async (jobCardId, departmentSlug, reason, user) =>
     });
 
     if (updatedJobCard) {
+      // 1. Explicitly mark the skipped department's pending assignment stage as SKIPPED
+      await skipDepartmentAssignmentPendingStage(tx, {
+        jobCard: updatedJobCard,
+        department: targetDepartment,
+        modifiedById: user?.userId || null
+      });
+
       const newJobCardStatus = await deriveJobCardStatus(tx, updatedJobCard);
       if (newJobCardStatus && newJobCardStatus.id !== updatedJobCard.currentStatusId) {
-        await syncJobCardStageTracking(tx, parsedJobCardId, updatedJobCard.currentStatusId, newJobCardStatus, user);
         await tx.jobCard.update({
           where: { id: parsedJobCardId },
           data: { currentStatusId: newJobCardStatus.id }
         });
+        updatedJobCard.currentStatusId = newJobCardStatus.id;
+        updatedJobCard.currentStatus = newJobCardStatus;
       }
 
       await syncAssignmentPendingStages(tx, { jobCard: updatedJobCard, actorUserId: user?.userId || null });

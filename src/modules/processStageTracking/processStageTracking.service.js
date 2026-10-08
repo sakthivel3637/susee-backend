@@ -52,6 +52,28 @@ const startStage = async ({
 
   console.info(`[startStage] stageTimeLimit found: id=${limit.id}, allowedMinutes=${limit.allowedMinutes}`);
 
+  if (jobCardId) {
+    const existingStage = await db.processStageTracking.findFirst({
+      where: {
+        jobCardId,
+        statusId,
+        stageStatus: {
+          in: ACTIVE_STAGE_STATUSES
+        }
+      },
+      include: {
+        status: true,
+        jobCard: { select: { jobCardNo: true, slug: true } },
+        gateEntry: { select: { gateEntryNo: true } },
+        vehicle: { select: { registrationNo: true } }
+      }
+    });
+
+    if (existingStage) {
+      return existingStage;
+    }
+  }
+
   const newStage = await db.processStageTracking.create({
     data: {
       locationId,
@@ -84,48 +106,31 @@ const startStage = async ({
 const completeStage = async ({
   gateEntryId = null,
   jobCardId = null,
-  moduleId,
-  statusId,
+  moduleId = null,
+  statusId = null,
   modifiedById = null
 }, db = prisma) => {
-  const stage = await db.processStageTracking.findFirst({
-    where: {
-      ...(gateEntryId ? { gateEntryId } : {}),
-      ...(jobCardId ? { OR: [{ jobCardId }, { jobCardId: null }] } : {}),
-      moduleId,
-      statusId,
-      stageStatus: {
-        in: ACTIVE_STAGE_STATUSES
-      }
-    },
-    orderBy: {
-      startedAt: 'desc'
+  const where = {
+    ...(gateEntryId ? { gateEntryId } : {}),
+    ...(jobCardId ? { OR: [{ jobCardId }, { jobCardId: null }] } : {}),
+    ...(moduleId ? { moduleId } : {}),
+    ...(statusId ? { statusId } : {}),
+    stageStatus: {
+      in: ACTIVE_STAGE_STATUSES
     }
-  });
+  };
 
-  if (!stage) {
-    return null;
-  }
-
-  const updatedStage = await db.processStageTracking.update({
-    where: { id: stage.id },
+  const updatedStages = await db.processStageTracking.updateMany({
+    where,
     data: {
       stageStatus: 'COMPLETED',
       completedAt: new Date(),
       ...(jobCardId ? { jobCardId } : {}),
       modifiedById
-    },
-    include: {
-      status: true,
-      jobCard: { select: { jobCardNo: true, slug: true } },
-      gateEntry: { select: { gateEntryNo: true } },
-      vehicle: { select: { registrationNo: true } }
     }
   });
 
-  // Completion Alert notification removed upon request:
-  // Notifications are now ONLY generated when stage schedule time limits expire (DELAY_ALERT).
-  return updatedStage;
+  return updatedStages;
 };
 
 const cancelStage = async ({

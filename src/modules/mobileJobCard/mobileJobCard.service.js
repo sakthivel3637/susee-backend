@@ -2473,15 +2473,10 @@ const updateJobCardServices = async (jobCardId, servicesPayload, user) => {
         }
 
         // Complete any open process stage tracker
-        const activeTracker = await tx.processStageTracking.findFirst({
-          where: { jobCardId: parsedJobCardId, completedAt: null }
+        await tx.processStageTracking.updateMany({
+          where: { jobCardId: parsedJobCardId, completedAt: null },
+          data: { completedAt: new Date(), stageStatus: 'COMPLETED' }
         });
-        if (activeTracker) {
-          await tx.processStageTracking.update({
-            where: { id: activeTracker.id },
-            data: { completedAt: new Date() }
-          });
-        }
 
         // Skip normal assignment sync — POSTPONED is fully handled above
         continue;
