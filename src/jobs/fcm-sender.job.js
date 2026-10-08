@@ -114,12 +114,24 @@ async function runFcmSenderWorkflow() {
               body: notification.message || ''
             },
             android: {
+              priority: 'high',
               collapseKey: collapseTag,
               notification: {
-                icon: 'ic_launcher',
-                color: '#000F7E',
+                icon: 'ic_stat_notification',
                 channelId: 'default',
+                sound: 'default',
+                defaultSound: true,
+                defaultVibrateTimings: true,
+                priority: 'high',
                 tag: collapseTag
+              }
+            },
+            apns: {
+              payload: {
+                aps: {
+                  sound: 'default',
+                  badge: 1
+                }
               }
             },
             data: {
