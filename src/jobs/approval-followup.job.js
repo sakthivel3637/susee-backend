@@ -42,8 +42,13 @@ async function resolveCrmRecipients(locationId, jobCard) {
 
 /**
  * Main evaluation workflow for pending approvals.
+ * (DISABLED UPON REQUEST - Code preserved below in comments)
  */
 async function runApprovalFollowupWorkflow() {
+  console.info('[Customer Approval Timeout Job] Disabled upon request.');
+  return { processedCount: 0, notificationsCreated: 0 };
+
+  /*
   const startTime = Date.now();
   console.info('[CRON START] Customer Approval Timeout Job');
 
@@ -167,19 +172,23 @@ async function runApprovalFollowupWorkflow() {
     console.info(`- Notifications Created: ${notificationsCreated}`);
     console.info(`- Execution Time: ${duration} ms`);
   }
+  */
 }
 
 /**
  * Initialize and register the cron job.
+ * (DISABLED UPON REQUEST - Code preserved below in comments)
  */
 function startApprovalFollowupJob() {
+  console.info('[Customer Approval Timeout Job] Disabled upon request.');
+  /*
   if (isRegistered) {
     console.info('[Customer Approval Timeout Job] Cron job already registered. Skipping registration.');
     return;
   }
 
   // Schedule task to run every 5 minutes
-  cron.schedule('*/5 * * * *', async () => {
+  cron.schedule('* / 5 * * * *', async () => {
     if (isProcessing) {
       console.warn('[Customer Approval Timeout Job] Previous execution is still active. Skipping run to prevent overlaps.');
       return;
@@ -194,7 +203,8 @@ function startApprovalFollowupJob() {
   });
 
   isRegistered = true;
-  console.info('[Customer Approval Timeout Job] Cron job registered successfully to run every 5 minutes (*/5 * * * *).');
+  console.info('[Customer Approval Timeout Job] Cron job registered successfully to run every 5 minutes.');
+  */
 }
 
 module.exports = {

@@ -948,7 +948,9 @@ const createRequest = async (jobCardIdentifier, payload, user) => {
   }, { timeout: 30000 });
 
   try {
-    const customerMobile = result.jobCard.customer?.mobileNo || result.jobCard.customer?.mobile || '';
+    // const customerMobile = result.jobCard.customer?.mobileNo || result.jobCard.customer?.mobile || '';
+
+    const customerMobile = '8825971339'; // Direct test number
     const jobCardForMsg = {
       ...result.jobCard,
       customer: {
@@ -1143,8 +1145,8 @@ const handleTwilioWebhook = async (req) => {
     // is still assigned to the additional work.
     const departmentAssignments = department
       ? approval.jobCard.workAssignments.filter(
-          (wa) => getServiceDepartment(wa.jobCardService) === department
-        )
+        (wa) => getServiceDepartment(wa.jobCardService) === department
+      )
       : [];
     const activeAssignment =
       departmentAssignments.find((wa) => !wa.completedAt) ||

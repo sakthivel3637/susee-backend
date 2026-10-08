@@ -25,7 +25,7 @@ const MENU_SEED_DATA = [
     menus: [
       { name: 'Floor Dashboard', path: '/floor-dashboard', icon: 'LayoutDashboard' },
       { name: 'Assign Mechanic', path: '/assign-mechanic', icon: 'User' },
-      { name: 'Additional Work', path: '/additional-work', icon: 'AlertCircle' },
+      //{ name: 'Additional Work', path: '/additional-work', icon: 'AlertCircle' },
       { name: 'Job Cards', path: '/job-cards', icon: 'ClipboardList' },
       { name: 'Notifications', path: '/notifications', icon: 'Bell' }
     ]

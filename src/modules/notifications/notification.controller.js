@@ -56,7 +56,7 @@ async function listNotifications(req, res, next) {
     const limit = parseInt(req.query.limit, 10) || 20;
     const page = parseInt(req.query.page, 10) || 1;
     const offset = (page - 1) * limit;
-    const unreadOnly = String(req.query.unreadOnly || '').toLowerCase() === 'true';
+    const unreadOnly = String(req.query.unreadOnly || req.query.unread || '').toLowerCase() === 'true';
 
     const { notifications, total } = await notificationService.getUserNotifications(userId, limit, offset, unreadOnly);
 

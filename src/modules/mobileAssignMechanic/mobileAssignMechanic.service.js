@@ -23,6 +23,7 @@ const getMobileList = async (query, user) => {
     const custName = req.customerName || 'Unknown';
     return {
       id: req.jobCardId,
+      canSkip: Boolean(req.canSkip),
       jobCardNo: req.jobCardNo || '',
       vehicleNo: req.vehicleNo || '',
       customerName: custName,
