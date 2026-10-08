@@ -26,7 +26,14 @@ const locationSelect = {
     select: {
       id: true,
       serviceCenterCode: true,
-      serviceCenterName: true
+      serviceCenterName: true,
+      gstNumber: true,
+      contactPhone: true,
+      contactEmail: true,
+      logoUrl: true,
+      websiteUrl: true,
+      tax: true,
+      isActive: true
     }
   },
   state: {

@@ -5,5 +5,5 @@ const validation = require('./validation');
 module.exports = createAdminMasterRoutes({
   controller,
   validation,
-  menuPath: '/service-centers'
+  menuPath: '/locations'
 });

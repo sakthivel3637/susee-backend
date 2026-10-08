@@ -153,16 +153,26 @@ baseService.importServiceItems = async (fileBuffer, actorUserId) => {
         normalizeString(c.name) === rawCategoryNorm || normalizeString(c.slug) === rawCategoryNorm
       );
 
+      // Only allow Mechanical and Body Shop categories
+      if (category && !['mechanical', 'body-shop'].includes(category.slug)) {
+        category = undefined;
+      }
+
       if (!category) {
-        const categorySlug = await resolveSlug({ model: 'serviceCategory', source: item.categoryName });
-        category = await prisma.serviceCategory.create({
-          data: {
-            name: item.categoryName,
-            slug: categorySlug,
-            isActive: true,
-            createdById: actorUserId || null
-          }
-        });
+        skippedCount++;
+        const validNames = allCategories
+          .filter(c => c.isActive !== false && ['mechanical', 'body-shop'].includes(c.slug))
+          .map(c => c.name)
+          .join(', ');
+        errors.push(`Row ${item.rowNumber}: Invalid Category Group "${item.categoryName}". Allowed: ${validNames || 'Mechanical, Body Shop'}. Skipped.`);
+        continue;
+      }
+
+      const parsedPrice = parseFloat(item.price);
+      if (isNaN(parsedPrice) || parsedPrice <= 0) {
+        skippedCount++;
+        errors.push(`Row ${item.rowNumber}: Invalid Base Price. Price must be greater than 0. Skipped.`);
+        continue;
       }
 
       const rawItemNorm = normalizeString(item.name);
