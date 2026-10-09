@@ -3,36 +3,52 @@ const { getSocket } = require('../../config/socket');
 
 async function upsertDeviceToken(userId, { token, platform = null, deviceId = null }) {
   const normalizedDeviceId = String(deviceId || '').trim();
+  const normalizedPlatform = String(platform || '').trim().toLowerCase();
 
+  // Deactivate existing active tokens for this user on the same platform and/or device
+  // so a single user does not accumulate multiple active tokens for the same physical device/platform
+  const deactivationOr = [];
   if (normalizedDeviceId) {
-    await prisma.userDeviceToken.updateMany({
-      where: {
-        deviceId: normalizedDeviceId,
-        token: {
-          not: token
-        },
-        isActive: true
-      },
-      data: {
-        isActive: false,
-        lastUsedAt: new Date()
+    deactivationOr.push({ deviceId: normalizedDeviceId });
+  }
+  if (normalizedPlatform) {
+    deactivationOr.push({
+      userId: Number(userId),
+      platform: {
+        in: [normalizedPlatform, normalizedPlatform.toUpperCase()]
       }
     });
+  } else {
+    deactivationOr.push({ userId: Number(userId) });
   }
+
+  await prisma.userDeviceToken.updateMany({
+    where: {
+      OR: deactivationOr,
+      token: {
+        not: token
+      },
+      isActive: true
+    },
+    data: {
+      isActive: false,
+      lastUsedAt: new Date()
+    }
+  });
 
   return prisma.userDeviceToken.upsert({
     where: { token },
     update: {
-      userId,
-      platform,
+      userId: Number(userId),
+      platform: normalizedPlatform || platform,
       deviceId: normalizedDeviceId || null,
       isActive: true,
       lastUsedAt: new Date()
     },
     create: {
-      userId,
+      userId: Number(userId),
       token,
-      platform,
+      platform: normalizedPlatform || platform,
       deviceId: normalizedDeviceId || null,
       isActive: true,
       lastUsedAt: new Date()
