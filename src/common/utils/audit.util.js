@@ -118,7 +118,7 @@ const buildChangeDetails = (oldRecord, newRecord, fields) => {
 
       const oldVal = oldRecord[fieldName];
       const newVal = newRecord[fieldName];
-      
+
       // If both are falsy (null, undefined, ''), treat as unchanged
       if (!oldVal && !newVal) return false;
 

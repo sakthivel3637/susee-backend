@@ -18,7 +18,7 @@ const buildAuditLogWhere = (query) => {
   if (query.actionType) {
     where.actionType = query.actionType;
   }
-  
+
   if (query.performedByUserId) {
     where.performedByUserId = Number.parseInt(query.performedByUserId, 10);
   }
@@ -61,40 +61,50 @@ const listAuditLogs = async (query) => {
   // By default, sort by newest first
   const orderBy = { performedAt: 'desc' };
 
-  const [auditLogs, total] = await prisma.$transaction([
-    prisma.auditLog.findMany({
-      where,
-      skip,
-      take: limit,
-      orderBy,
-      include: {
-        performedBy: {
-          select: { id: true, fullName: true, emailId: true }
-        },
-        location: {
-          select: { id: true, locationName: true }
+  try {
+    const [auditLogs, total] = await prisma.$transaction([
+      prisma.auditLog.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy,
+        include: {
+          performedBy: {
+            select: { id: true, fullName: true, emailId: true }
+          },
+          location: {
+            select: { id: true, locationName: true }
+          }
         }
+      }),
+      prisma.auditLog.count({ where })
+    ]);
+
+    // Convert BigInt to String to avoid serialization issues
+    const serializedLogs = auditLogs.map(log => ({
+      ...log,
+      id: log.id.toString(),
+      recordId: log.recordId.toString(),
+    }));
+
+    return {
+      auditLogs: serializedLogs,
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
       }
-    }),
-    prisma.auditLog.count({ where })
-  ]);
-
-  // Convert BigInt to String to avoid serialization issues
-  const serializedLogs = auditLogs.map(log => ({
-    ...log,
-    id: log.id.toString(),
-    recordId: log.recordId.toString(),
-  }));
-
-  return {
-    auditLogs: serializedLogs,
-    meta: {
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit)
+    };
+  } catch (error) {
+    if (error.code === 'P2021' || error.message?.includes('dbo.audit_logs')) {
+      return {
+        auditLogs: [],
+        meta: { page, limit, total: 0, totalPages: 0 }
+      };
     }
-  };
+    throw error;
+  }
 };
 
 const getAuditLogDetail = async (id) => {

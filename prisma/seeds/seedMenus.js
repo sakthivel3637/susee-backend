@@ -112,7 +112,9 @@ const REMOVED_MENU_PATHS = [
   { module: 'managing-director', path: '/audit-logs' },
 
   { module: 'admin', path: '/master-categories' },
-  { module: 'admin', path: '/service-centers' }
+  { module: 'admin', path: '/service-centers' },
+  { module: 'floor-supervisor', path: '/additional-work' },
+  { module: 'body-shop-supervisor', path: '/body-shop-additional-work' }
 ];
 
 const seedMenus = async (prisma) => {
