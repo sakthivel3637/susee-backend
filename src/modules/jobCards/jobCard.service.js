@@ -787,10 +787,10 @@ const toJobCardListResponse = (jobCard, department, bayMap = new Map()) => {
   const effectiveDept = (department && department.length > 0)
     ? department
     : (currentStatusCode.includes('BODY_SHOP')
-        ? ['body-shop']
-        : (currentStatusCode.includes('MECHANICAL')
-            ? ['mechanical']
-            : null));
+      ? ['body-shop']
+      : (currentStatusCode.includes('MECHANICAL')
+        ? ['mechanical']
+        : null));
 
   const departmentAssignments = effectiveDept && effectiveDept.length > 0
     ? displayAssignments.filter((assignment) => {
@@ -952,10 +952,10 @@ const listJobCards = async (query, user) => {
   }
 
   const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
-  const sortBy = query.sortBy === 'assignedAt' ? 'assignedAt' : 'createdAt';
+  const sortBy = (query.sortBy === 'assignedAt' || query.sortBy === 'updatedAt') ? 'updatedAt' : 'createdAt';
   // For mechanic/bodyshop tabs: sort by updatedAt desc (job card updatedAt is refreshed on assignment)
   // For delivery/other: sort by createdAt as normal
-  const orderBy = sortBy === 'assignedAt'
+  const orderBy = sortBy === 'updatedAt'
     ? { updatedAt: 'desc' }
     : { createdAt: sortOrder };
 
