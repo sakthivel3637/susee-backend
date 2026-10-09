@@ -39,7 +39,7 @@ async function sendWelcomeEmail(userEmail, randomPassword) {
     <html>
     <head>
         <style>
-            body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background-color: #f0f4ff; margin: 0; padding: 0; }
+            body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background-color: #F0F4FF; margin: 0; padding: 0; }
             .container { max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 14px; box-shadow: 0 4px 16px rgba(37, 99, 235, 0.1), 0 2px 4px rgba(0, 0, 0, 0.06); overflow: hidden; }
             .header { background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%); color: #ffffff; text-align: center; padding: 30px 20px; }
             .content { padding: 30px; color: #1e293b; line-height: 1.6; }
