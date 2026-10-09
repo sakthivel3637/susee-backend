@@ -25,7 +25,7 @@ const MENU_SEED_DATA = [
     menus: [
       { name: 'Floor Dashboard', path: '/floor-dashboard', icon: 'LayoutDashboard' },
       { name: 'Assign Mechanic', path: '/assign-mechanic', icon: 'User' },
-      //{ name: 'Additional Work', path: '/additional-work', icon: 'AlertCircle' },//
+      //{ name: 'Additional Work', path: '/additional-work', icon: 'AlertCircle' },
       { name: 'Job Cards', path: '/job-cards', icon: 'ClipboardList' },
       { name: 'Notifications', path: '/notifications', icon: 'Bell' }
     ]
@@ -97,8 +97,7 @@ const MENU_SEED_DATA = [
           { name: 'Bays', path: '/md-bays', icon: 'Tool' }
         ]
       },
-      { name: 'Service Centers', path: '/service-centers', icon: 'Building' },
-      { name: 'Locations', path: '/locations', icon: 'MapPin' },
+      { name: 'Service Center & Location', path: '/locations', icon: 'MapPin' },
       { name: 'Role Management', path: '/roles', icon: 'ShieldCheck' },
       { name: 'User Management', path: '/users', icon: 'Users' },
       { name: 'Audit Logs', path: '/audit-logs', icon: 'FileText' }
@@ -112,10 +111,19 @@ const REMOVED_MENU_PATHS = [
   { module: 'managing-director', path: '/master-bays' },
   { module: 'managing-director', path: '/audit-logs' },
 
-  { module: 'admin', path: '/master-categories' }
+  { module: 'admin', path: '/master-categories' },
+  { module: 'admin', path: '/service-centers' },
+  { module: 'floor-supervisor', path: '/additional-work' },
+  { module: 'body-shop-supervisor', path: '/body-shop-additional-work' }
 ];
 
 const seedMenus = async (prisma) => {
+  // Update name for /locations menu to Service Center & Location
+  await prisma.menu.updateMany({
+    where: { path: '/locations' },
+    data: { name: 'Service Center & Location' }
+  });
+
   // Deactivate all legacy body-shop-supervisor menus
   await prisma.menu.updateMany({
     where: { module: 'body-shop-supervisor' },

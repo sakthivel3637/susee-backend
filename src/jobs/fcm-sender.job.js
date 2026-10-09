@@ -82,11 +82,28 @@ async function runFcmSenderWorkflow() {
       processedCount++;
       const allTokens = notification.user?.deviceTokens || [];
       const seenTokens = new Set();
-      const tokens = allTokens.filter(t => {
-        if (!t.token || seenTokens.has(t.token)) return false;
+      const seenPlatforms = new Set();
+      const tokens = [];
+
+      for (const t of allTokens) {
+        if (!t.token || seenTokens.has(t.token)) continue;
         seenTokens.add(t.token);
-        return true;
-      });
+
+        const platKey = (t.platform || 'android').toLowerCase();
+        // If we already have a more recent active token for this user on this platform,
+        // deactivate this stale token and skip sending to avoid duplicate notifications on the same device!
+        if (seenPlatforms.has(platKey)) {
+          console.info(`[FCM Sender Job] Deactivating duplicate stale token ID ${t.id} for user ${notification.userId}`);
+          prisma.userDeviceToken.update({
+            where: { id: t.id },
+            data: { isActive: false }
+          }).catch(err => console.warn(`[FCM Sender Job] Error deactivating stale token:`, err.message));
+          continue;
+        }
+
+        seenPlatforms.add(platKey);
+        tokens.push(t);
+      }
 
       if (tokens.length === 0) {
         console.warn(`[FCM Sender Job] Notification ${notification.id} skipped: User ${notification.userId} has no active mobile device tokens.`);
@@ -114,12 +131,24 @@ async function runFcmSenderWorkflow() {
               body: notification.message || ''
             },
             android: {
+              priority: 'high',
               collapseKey: collapseTag,
               notification: {
-                icon: 'ic_launcher',
-                color: '#000F7E',
+                icon: 'ic_stat_notification',
                 channelId: 'default',
+                sound: 'default',
+                defaultSound: true,
+                defaultVibrateTimings: true,
+                priority: 'high',
                 tag: collapseTag
+              }
+            },
+            apns: {
+              payload: {
+                aps: {
+                  sound: 'default',
+                  badge: 1
+                }
               }
             },
             data: {
