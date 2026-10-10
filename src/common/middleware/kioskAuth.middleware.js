@@ -7,7 +7,6 @@ const validateKioskKey = async (req, res, next) => {
     const kioskKey = req.query.kioskKey || req.headers['x-kiosk-key'];
 
     if (!kioskKey) {
-      // Fallback to JWT authentication if no kioskKey is provided
       return authenticate(req, res, next);
     }
 

@@ -130,6 +130,15 @@ const completeStage = async ({
     }
   });
 
+  try {
+    const io = getSocket();
+    if (io) {
+      io.emit('stage-completed', { gateEntryId, jobCardId, moduleId, statusId });
+    }
+  } catch (socketErr) {
+    console.warn('Failed to emit stage-completed socket event:', socketErr?.message);
+  }
+
   return updatedStages;
 };
 

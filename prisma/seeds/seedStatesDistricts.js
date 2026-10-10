@@ -1,9 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
-const {
-  seedStateDistricts,
-  TAMIL_NADU_STATE,
-  TAMIL_NADU_DISTRICTS
-} = require('./state-district.seed');
+const { seedStateDistricts, TAMIL_NADU_STATE, TAMIL_NADU_DISTRICTS } = require('./state-district.seed');
 
 const run = async () => {
   const prisma = new PrismaClient();

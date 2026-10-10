@@ -39,6 +39,7 @@ const validatePayload = (req, res, next) => {
     statusId,
     stageCode,
     allowedMinutes,
+    repeatIntervalMinutes,
     notifyRoleIds,
     notifyUserIds
   } = req.body || {};
@@ -57,6 +58,10 @@ const validatePayload = (req, res, next) => {
 
   if (!isPositiveInt(allowedMinutes)) {
     return sendValidationError(res, 'allowedMinutes must be a positive integer');
+  }
+
+  if (!isOptionalPositiveInt(repeatIntervalMinutes)) {
+    return sendValidationError(res, 'repeatIntervalMinutes must be a positive integer');
   }
 
   if (!isOptionalPositiveInt(locationId)) {

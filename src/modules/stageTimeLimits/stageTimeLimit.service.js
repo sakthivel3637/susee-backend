@@ -64,6 +64,7 @@ const formatStageTimeLimit = (record) => {
     statusCode: record.status?.statusCode || null,
     stageCode: record.stageCode,
     allowedMinutes: record.allowedMinutes,
+    repeatIntervalMinutes: record.repeatIntervalMinutes || null,
     notifyRoles: roles,
     notifyRoleIds: roles.map(r => r.id),
     notifyUsers: users,
@@ -152,6 +153,9 @@ const normalizePayload = (payload, actor, isUpdate = false) => {
     statusId: Number(payload.statusId),
     stageCode: String(payload.stageCode || '').trim(),
     allowedMinutes: Number(payload.allowedMinutes),
+    repeatIntervalMinutes: payload.repeatIntervalMinutes !== undefined && payload.repeatIntervalMinutes !== null && payload.repeatIntervalMinutes !== ''
+      ? Number(payload.repeatIntervalMinutes)
+      : null,
     isActive: typeof payload.isActive === 'boolean' ? payload.isActive : true,
     ...(isUpdate ? { modifiedById: actor?.userId || null } : { createdById: actor?.userId || null })
   };
@@ -324,7 +328,7 @@ const updateStageTimeLimit = async (id, payload, actor) => {
         recordName: `Schedule for ${record.stageCode}`,
         comments: 'Stage schedule updated',
         locationId: record.locationId,
-        details: buildChangeDetails(currentRecord, record, ['locationId', 'moduleId', 'statusId', 'stageCode', 'allowedMinutes', 'isActive'])
+        details: buildChangeDetails(currentRecord, record, ['locationId', 'moduleId', 'statusId', 'stageCode', 'allowedMinutes', 'repeatIntervalMinutes', 'isActive'])
       });
     }
 

@@ -61,12 +61,12 @@ async function runProcessStageDelayMonitorWorkflow() {
   let scannedCount = 0;
   let delayedCount = 0;
   let notificationsCreated = 0;
+  let repeatEventsEmitted = 0;
 
   try {
-    const pendingStages = await prisma.processStageTracking.findMany({
+    const activeStages = await prisma.processStageTracking.findMany({
       where: {
-        stageStatus: 'PENDING',
-        isDelayNotified: false,
+        stageStatus: { in: ['PENDING', 'DELAYED'] },
         completedAt: null
       },
       include: {
@@ -97,25 +97,41 @@ async function runProcessStageDelayMonitorWorkflow() {
       take: 200
     });
 
-    scannedCount = pendingStages.length;
+    scannedCount = activeStages.length;
 
-    for (const stage of pendingStages) {
+    for (const stage of activeStages) {
       const limit = await findStageTimeLimit(prisma, {
         locationId: stage.locationId,
         moduleId: stage.moduleId,
         statusId: stage.statusId
       });
-      // Ensure recipients are fetched
-      if (limit) {
-        const fullLimit = await prisma.stageTimeLimit.findUnique({
-          where: { id: limit.id },
-          include: { recipients: true }
-        });
-        Object.assign(limit, { recipients: fullLimit?.recipients || [] });
+
+      if (!limit || !limit.allowedMinutes || limit.allowedMinutes <= 0 || !stage.startedAt) {
+        continue;
       }
 
-      if (!shouldNotifyStage(stage, limit, now)) {
-        continue;
+      // Ensure recipients are fetched
+      const fullLimit = await prisma.stageTimeLimit.findUnique({
+        where: { id: limit.id },
+        include: { recipients: true }
+      });
+      Object.assign(limit, { recipients: fullLimit?.recipients || [] });
+
+      const isFirstTime = !stage.isDelayNotified || !stage.lastNotifiedAt;
+      const initialDueAt = new Date(stage.startedAt.getTime() + (limit.allowedMinutes * 60 * 1000));
+
+      if (isFirstTime) {
+        if (initialDueAt > now) {
+          continue; // Initial SLA threshold not reached yet
+        }
+      } else {
+        const repeatMinutes = limit.repeatIntervalMinutes || limit.allowedMinutes || 5;
+        const repeatMs = repeatMinutes * 60 * 1000;
+        const nextRepeatAt = new Date(new Date(stage.lastNotifiedAt).getTime() + repeatMs);
+
+        if (nextRepeatAt > now) {
+          continue; // Repeat interval threshold not reached yet
+        }
       }
 
       const recipients = await resolveRecipients(stage, limit);
@@ -127,60 +143,69 @@ async function runProcessStageDelayMonitorWorkflow() {
       const notification = buildDelayMessage(stage);
 
       await prisma.$transaction(async (tx) => {
-        const locked = await tx.processStageTracking.updateMany({
-          where: {
-            id: stage.id,
-            stageStatus: 'PENDING',
-            isDelayNotified: false,
-            completedAt: null
-          },
+        await tx.processStageTracking.update({
+          where: { id: stage.id },
           data: {
             stageStatus: 'DELAYED',
             isDelayNotified: true,
-            delayNotifiedAt: now
+            delayNotifiedAt: stage.delayNotifiedAt || now,
+            lastNotifiedAt: now,
+            notificationCount: { increment: 1 }
           }
         });
 
-        if (locked.count === 0) {
-          return;
-        }
-
         delayedCount++;
-
-        if (recipients.length === 0) {
-          return;
-        }
-
-        await tx.notification.createMany({
-          data: recipients.map((userId) => ({
-            userId,
-            title: notification.title,
-            message: notification.message,
-            type: 'DELAY_ALERT',
-            locationId: stage.locationId,
-            gateEntryId: stage.gateEntryId,
-            jobCardId: stage.jobCardId,
-            processStageTrackingId: stage.id,
-            sentAt: null,
-            retryCount: 0
-          }))
-        });
-
         const io = getSocket();
-        if (io) {
-          recipients.forEach((userId) => {
-            io.to(`user:${userId}`).emit('notification-created', {
-              title: notification.title,
-              message: notification.message,
-              type: 'DELAY_ALERT',
-              jobCardId: stage.jobCardId,
-              jobCardSlug: stage.jobCard?.slug || null,
-              processStageTrackingId: stage.id
-            });
-          });
-        }
 
-        notificationsCreated += recipients.length;
+        if (isFirstTime) {
+          if (recipients.length > 0) {
+            await tx.notification.createMany({
+              data: recipients.map((userId) => ({
+                userId,
+                title: notification.title,
+                message: notification.message,
+                type: 'DELAY_ALERT',
+                locationId: stage.locationId,
+                gateEntryId: stage.gateEntryId,
+                jobCardId: stage.jobCardId,
+                processStageTrackingId: stage.id,
+                sentAt: null,
+                retryCount: 0
+              }))
+            });
+            notificationsCreated += recipients.length;
+          }
+
+          if (io) {
+            recipients.forEach((userId) => {
+              io.to(`user:${userId}`).emit('notification-created', {
+                title: notification.title,
+                message: notification.message,
+                type: 'DELAY_ALERT',
+                jobCardId: stage.jobCardId,
+                jobCardSlug: stage.jobCard?.slug || null,
+                processStageTrackingId: stage.id,
+                statusCode: stage.status?.statusCode
+              });
+            });
+          }
+        } else {
+          // Repeat alert: No DB insert! Emit Socket event for online popups
+          if (io && recipients.length > 0) {
+            recipients.forEach((userId) => {
+              io.to(`user:${userId}`).emit('notification-repeat-popup', {
+                title: notification.title,
+                message: notification.message,
+                type: 'DELAY_ALERT',
+                jobCardId: stage.jobCardId,
+                jobCardSlug: stage.jobCard?.slug || null,
+                processStageTrackingId: stage.id,
+                statusCode: stage.status?.statusCode
+              });
+            });
+            repeatEventsEmitted += recipients.length;
+          }
+        }
       });
     }
   } catch (error) {
@@ -188,9 +213,10 @@ async function runProcessStageDelayMonitorWorkflow() {
   } finally {
     const duration = Date.now() - startTime;
     console.info('[CRON END] Process Stage Delay Monitor Job');
-    console.info(`- Pending Stages Scanned: ${scannedCount}`);
-    console.info(`- Stages Marked Delayed: ${delayedCount}`);
-    console.info(`- Notifications Created: ${notificationsCreated}`);
+    console.info(`- Active Stages Scanned: ${scannedCount}`);
+    console.info(`- Stages Evaluated Delayed: ${delayedCount}`);
+    console.info(`- Initial DB Notifications Created: ${notificationsCreated}`);
+    console.info(`- Repeat Socket Popups Emitted: ${repeatEventsEmitted}`);
     console.info(`- Execution Time: ${duration} ms`);
   }
 }
