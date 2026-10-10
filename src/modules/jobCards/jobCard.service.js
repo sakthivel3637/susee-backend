@@ -1,6 +1,6 @@
 const prisma = require('../../config/db');
 const { getSocket } = require('../../config/socket');
-const { STATUS_MODULE_CODES, statusModuleFilter, resolveStatusById, resolveStatusFromCodes, resolveStatusIdFromCodes } = require('../../common/utils/status.util');
+const { STATUS_MODULE_CODES, statusModuleFilter, resolveStatusById, resolveStatusFromCodes, resolveStatusIdFromCodes, resolveOrEnsureStatus } = require('../../common/utils/status.util');
 const { normalizeVehicleNumber } = require('../../utils/normalizeVehicleNumber');
 const { createAuditLog } = require('../../common/utils/audit.util');
 const { syncAssignmentPendingStages, skipDepartmentAssignmentPendingStage } = require('../processStageTracking/departmentAssignmentStage.service');
@@ -59,10 +59,11 @@ const JOB_CARD_APPROVED_STATUS_CODES = ['APPROVED'];
 const JOB_CARD_REJECTED_STATUS_CODES = ['REJECTED'];
 const APPROVAL_APPROVED_STATUS_CODES = ['APPROVED'];
 const APPROVAL_REJECTED_STATUS_CODES = ['REJECTED'];
-const DEPARTMENT_ORDER = ['mechanical', 'body-shop'];
+const DEPARTMENT_ORDER = ['mechanical', 'body-shop', 'water-wash'];
 const DEPARTMENT_ALIASES = {
   mechanical: ['mechanical', 'mechanic', 'mechnanic', 'floor'],
-  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'denting']
+  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'denting'],
+  'water-wash': ['water-wash', 'water_wash', 'water wash', 'waterwash', 'washing', 'wash']
 };
 const ASSIGNMENT_STATUS_CODES = {
   mechanical: {
@@ -280,19 +281,22 @@ const normalizeRoleSlug = (roleSlug) => {
 const PRIVILEGED_SERVICE_STATUS_ROLES = new Set(['admin', 'super_admin', 'manager', 'managing_director']);
 
 const ROLE_DEPARTMENTS = {
-  floor_supervisor: ['mechanical', 'body-shop'],
+  floor_supervisor: ['mechanical', 'body-shop', 'water-wash'],
   mechanical: 'mechanical',
   mechanic: 'mechanical',
-  body_shop_supervisor: ['mechanical', 'body-shop']
+  body_shop_supervisor: ['mechanical', 'body-shop'],
+  water_wash: 'water-wash',
+  water_wash_team: 'water-wash'
 };
 const ROLE_JOB_CARD_DEPARTMENTS = {
-  floor_supervisor: ['mechanical', 'body-shop'],
+  floor_supervisor: ['mechanical', 'body-shop', 'water-wash'],
   body_shop_supervisor: ['mechanical', 'body-shop']
 };
 
 const MODULE_DEPARTMENTS = {
-  'floor-supervisor': ['mechanical', 'body-shop'],
-  'body-shop-supervisor': ['mechanical', 'body-shop']
+  'floor-supervisor': ['mechanical', 'body-shop', 'water-wash'],
+  'body-shop-supervisor': ['mechanical', 'body-shop'],
+  'water-wash': 'water-wash'
 };
 const PRIVILEGED_MODULES = new Set(['admin', 'manager', 'managing-director']);
 
@@ -518,6 +522,11 @@ const resolveRequiredStatus = async (tx, moduleCode, statusCodes, label) => {
 };
 
 const syncAssignmentsForServiceStatus = async (tx, service, serviceStatus, user) => {
+  const department = getServiceDepartment(service);
+  if (department === 'water-wash') {
+    // Water wash has no mechanic/bay assignments; skip workAssignment synchronization
+    return;
+  }
   const serviceStatusCode = getStatusCode(serviceStatus);
   const shouldStart = isInProgressStatusCode(serviceStatusCode);
   const shouldComplete = isCompletedStatusCode(serviceStatusCode);
@@ -539,7 +548,6 @@ const syncAssignmentsForServiceStatus = async (tx, service, serviceStatus, user)
     throw createHttpError(400, 'Service must be assigned before work status can be updated');
   }
 
-  const department = getServiceDepartment(service);
   if (!department) {
     throw createHttpError(400, 'Service category is not supported for work status update');
   }
@@ -611,6 +619,11 @@ const deriveJobCardStatus = async (tx, jobCard) => {
       continue;
     }
 
+    // Do not let water-wash preempt a repair department that is still postponed
+    if (department === 'water-wash' && firstPostponed) {
+      break;
+    }
+
     activeDepartment = department;
     break;
   }
@@ -618,6 +631,21 @@ const deriveJobCardStatus = async (tx, jobCard) => {
   let targetDepartment = activeDepartment || firstPostponed;
 
   if (targetDepartment) {
+    if (targetDepartment === 'water-wash') {
+      const approvedServices = getDepartmentServices(jobCard, 'water-wash').filter(service => isApprovedForWork(service) && !isRejectedAdditionalService(service));
+      const hasInProgress = approvedServices.some(service => isInProgressStatusCode(getStatusCode(service.serviceStatus)));
+      if (hasInProgress) {
+        return resolveOrEnsureStatus(
+          tx,
+          STATUS_MODULE_CODES.JOB_CARD_STATUS,
+          'WATER_WASH_IN_PROGRESS',
+          'Water Wash In Progress',
+          31
+        );
+      }
+      return null;
+    }
+
     // For the final status resolution only use approved (non-pending) services
     const approvedServices = getDepartmentServices(jobCard, targetDepartment).filter(service => isApprovedForWork(service) && !isRejectedAdditionalService(service));
     const pendingServices = getDepartmentServices(jobCard, targetDepartment).filter(isPendingAdditionalService);
@@ -757,14 +785,16 @@ const computeWorkType = (jobCard) => {
 
   let hasMechanical = false;
   let hasBodyShop = false;
+  let hasWaterWash = false;
 
   for (const s of allServices) {
     const dept = getServiceDepartment(s);
     if (dept === 'mechanical') hasMechanical = true;
     if (dept === 'body-shop') hasBodyShop = true;
+    if (dept === 'water-wash') hasWaterWash = true;
   }
 
-  if (!hasMechanical && !hasBodyShop) {
+  if (!hasMechanical && !hasBodyShop && !hasWaterWash) {
     const statusCode = String(jobCard.currentStatus?.statusCode || '').toUpperCase();
     if (statusCode.includes('BODY_SHOP')) {
       hasBodyShop = true;
@@ -775,6 +805,8 @@ const computeWorkType = (jobCard) => {
 
   if (hasMechanical && hasBodyShop) return 'Both';
   if (hasBodyShop) return 'Body Shop';
+  if (hasMechanical) return 'Mechanic';
+  if (hasWaterWash) return 'Water Wash';
   return 'Mechanic';
 };
 
@@ -939,7 +971,20 @@ const listJobCards = async (query, user) => {
     }
   }
 
-  if (department && department.length > 0) {
+  if (query.tab === 'waterwash' || (department && department.includes('water-wash') && !query.status)) {
+    where.services = {
+      some: {
+        serviceItem: {
+          category: {
+            slug: { in: ['water-wash', 'water_wash', 'water wash', 'waterwash', 'washing', 'wash'] }
+          }
+        }
+      }
+    };
+    where.currentStatus = {
+      statusCode: { notIn: ['DELIVERED', 'REJECTED'] }
+    };
+  } else if (department && department.length > 0) {
     where.services = {
       some: {
         serviceItem: {
@@ -1653,6 +1698,28 @@ const updateJobCard = async (id, payload, user) => {
 
         existingService.serviceStatusId = serviceStatus.id;
         existingService.serviceStatus = serviceStatus;
+      }
+
+      // Auto-resume postponed services in other repair department if a department reached completion
+      const currentServices = existingJobCard.services || [];
+      for (const dept of ['mechanical', 'body-shop']) {
+        const deptServices = currentServices.filter(s => getServiceDepartment(s) === dept && isApprovedForWork(s) && !isRejectedAdditionalService(s));
+        const isDeptNowComplete = deptServices.length > 0 && deptServices.every(isJobCardServiceCompleted);
+        if (isDeptNowComplete) {
+          const otherDept = dept === 'mechanical' ? 'body-shop' : 'mechanical';
+          const otherPostponed = currentServices.filter(s => getServiceDepartment(s) === otherDept && getStatusCode(s.serviceStatus) === 'POSTPONED');
+          if (otherPostponed.length > 0) {
+            const pendingStatus = await resolveRequiredStatus(tx, STATUS_MODULE_CODES.JOB_CARD_SERVICE, ['PENDING'], 'Pending');
+            for (const s of otherPostponed) {
+              await tx.jobCardService.update({
+                where: { id: s.id },
+                data: { serviceStatusId: pendingStatus.id, modifiedById: user && user.userId ? user.userId : null }
+              });
+              s.serviceStatusId = pendingStatus.id;
+              s.serviceStatus = pendingStatus;
+            }
+          }
+        }
       }
     }
 

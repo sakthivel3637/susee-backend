@@ -7,10 +7,11 @@ const { refreshJobCardStatus } = require('../jobCards/jobCard.service');
 
 const storageProvider = createStorageProvider();
 
-const DEPARTMENT_ORDER = ['mechanical', 'body-shop'];
+const DEPARTMENT_ORDER = ['mechanical', 'body-shop', 'water-wash'];
 const DEPARTMENT_ALIASES = {
   mechanical: ['mechanical', 'mechanic', 'mechnanic', 'floor'],
-  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'denting']
+  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'denting'],
+  'water-wash': ['water-wash', 'water_wash', 'water wash', 'waterwash', 'washing', 'wash']
 };
 const ROLE_ALIASES = {
   body_shop: 'floor_supervisor',
@@ -18,18 +19,23 @@ const ROLE_ALIASES = {
   bodyshop_supervisor: 'floor_supervisor',
   body_shop_supervisor: 'floor_supervisor',
   floor: 'floor_supervisor',
-  mechanical_supervisor: 'floor_supervisor'
+  mechanical_supervisor: 'floor_supervisor',
+  water_wash: 'floor_supervisor',
+  water_wash_team: 'floor_supervisor'
 };
 const ROLE_DEPARTMENTS = {
-  floor_supervisor: ['mechanical', 'body-shop'],
+  floor_supervisor: ['mechanical', 'body-shop', 'water-wash'],
   mechanical: 'mechanical',
   mechanic: 'mechanical',
-  body_shop_supervisor: ['mechanical', 'body-shop']
+  body_shop_supervisor: ['mechanical', 'body-shop'],
+  water_wash_team: 'water-wash',
+  water_wash: 'water-wash'
 };
 const PRIVILEGED_ROLES = new Set(['admin', 'super_admin', 'manager', 'managing_director']);
 const MODULE_DEPARTMENTS = {
-  'floor-supervisor': ['mechanical', 'body-shop'],
-  'body-shop-supervisor': ['mechanical', 'body-shop']
+  'floor-supervisor': ['mechanical', 'body-shop', 'water-wash'],
+  'body-shop-supervisor': ['mechanical', 'body-shop'],
+  'water-wash': 'water-wash'
 };
 const PRIVILEGED_MODULES = new Set(['admin', 'manager', 'managing-director']);
 const APPROVAL_TYPE_ADDITIONAL_WORK = 'ADDITIONAL_WORK';
@@ -747,7 +753,7 @@ const listAvailableServiceItems = async (tx, department) => {
     return normalizeDepartment(catName) === department;
   });
 
-  return deptItems.length > 0 ? deptItems : allItems;
+  return deptItems;
 };
 
 const getContext = async (jobCardIdentifier, query, user) => {

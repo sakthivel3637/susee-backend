@@ -82,9 +82,15 @@ const resolveStatusIdFromCodes = async (tx, moduleCode, statusCodes = []) => {
 };
 
 const resolveStatusById = async (tx, moduleCode, statusId) => {
-  const id = Number(statusId);
+  let id = Number(statusId);
+  let mod = moduleCode;
 
-  if (!Number.isInteger(id) || id <= 0 || !moduleCode) {
+  if (statusId === undefined && Number.isInteger(Number(moduleCode))) {
+    id = Number(moduleCode);
+    mod = null;
+  }
+
+  if (!Number.isInteger(id) || id <= 0) {
     return null;
   }
 
@@ -92,7 +98,7 @@ const resolveStatusById = async (tx, moduleCode, statusId) => {
     where: {
       id,
       isActive: true,
-      ...moduleWhere(moduleCode)
+      ...(mod ? moduleWhere(mod) : {})
     },
     select: {
       id: true,
@@ -104,6 +110,68 @@ const resolveStatusById = async (tx, moduleCode, statusId) => {
       isFinal: true
     }
   });
+};
+
+const resolveOrEnsureStatus = async (tx, moduleCode, statusCode, statusName, sortOrder = 30) => {
+  let status = await resolveStatusFromCodes(tx, moduleCode, [statusCode]);
+  if (status) return status;
+
+  try {
+    const mod = await tx.module.findFirst({
+      where: {
+        moduleCode: normalizeModuleCode(moduleCode),
+        isActive: true
+      }
+    });
+    if (!mod) return null;
+
+    const code = normalizeStatusCode(statusCode);
+    const slug = code.toLowerCase().replace(/[_\s]+/g, '-');
+
+    const existing = await tx.statusMaster.findFirst({
+      where: {
+        moduleId: mod.id,
+        OR: [
+          { statusCode: code },
+          { slug: slug }
+        ]
+      },
+      select: {
+        id: true,
+        moduleId: true,
+        statusCode: true,
+        statusName: true,
+        slug: true,
+        sortOrder: true,
+        isFinal: true
+      }
+    });
+    if (existing) return existing;
+
+    return await tx.statusMaster.create({
+      data: {
+        moduleId: mod.id,
+        statusCode: code,
+        statusName: statusName || code,
+        slug,
+        sortOrder: sortOrder || 0,
+        isFinal: false,
+        isActive: true
+      },
+      select: {
+        id: true,
+        moduleId: true,
+        statusCode: true,
+        statusName: true,
+        slug: true,
+        sortOrder: true,
+        isFinal: true
+      }
+    });
+  } catch (error) {
+    console.error(`Failed to ensure status ${statusCode} for module ${moduleCode}:`, error);
+    return null;
+  }
 };
 
 const isAllowedJobCardTransition = (currentStatusCode, nextStatusCode, transitions) => {
@@ -128,5 +196,7 @@ module.exports = {
   resolveStatusId,
   resolveStatusIdFromCodes,
   resolveStatusById,
+  resolveOrEnsureStatus,
   isAllowedJobCardTransition
 };
+

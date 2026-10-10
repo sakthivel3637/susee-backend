@@ -2,7 +2,7 @@ const router = require('express').Router({ mergeParams: true });
 const controller = require('./additionalWork.controller');
 const { permissionMiddleware } = require('../../common/middleware/permission.middleware');
 
-const additionalWorkMenuPaths = ['/additional-work', '/body-shop-additional-work'];
+const additionalWorkMenuPaths = ['/additional-work', '/body-shop-additional-work', '/water-wash', '/job-cards'];
 const canReadAdditionalWork = permissionMiddleware(additionalWorkMenuPaths, 'canRead');
 const canCreateAdditionalWork = permissionMiddleware(additionalWorkMenuPaths, 'canCreate');
 

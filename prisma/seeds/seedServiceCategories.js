@@ -10,6 +10,11 @@ const SERVICE_CATEGORIES = [
     name: 'Body Shop',
     slug: 'body-shop',
     description: 'Body shop service category'
+  },
+  {
+    name: 'Water Wash',
+    slug: 'water-wash',
+    description: 'Water wash service category'
   }
 ];
 

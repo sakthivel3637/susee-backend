@@ -153,18 +153,18 @@ baseService.importServiceItems = async (fileBuffer, actorUserId) => {
         normalizeString(c.name) === rawCategoryNorm || normalizeString(c.slug) === rawCategoryNorm
       );
 
-      // Only allow Mechanical and Body Shop categories
-      if (category && !['mechanical', 'body-shop'].includes(category.slug)) {
+      // Only allow Mechanical, Body Shop, and Water Wash categories
+      if (category && !['mechanical', 'body-shop', 'water-wash'].includes(category.slug)) {
         category = undefined;
       }
 
       if (!category) {
         skippedCount++;
         const validNames = allCategories
-          .filter(c => c.isActive !== false && ['mechanical', 'body-shop'].includes(c.slug))
+          .filter(c => c.isActive !== false && ['mechanical', 'body-shop', 'water-wash'].includes(c.slug))
           .map(c => c.name)
           .join(', ');
-        errors.push(`Row ${item.rowNumber}: Invalid Category Group "${item.categoryName}". Allowed: ${validNames || 'Mechanical, Body Shop'}. Skipped.`);
+        errors.push(`Row ${item.rowNumber}: Invalid Category Group "${item.categoryName}". Allowed: ${validNames || 'Mechanical, Body Shop, Water Wash'}. Skipped.`);
         continue;
       }
 

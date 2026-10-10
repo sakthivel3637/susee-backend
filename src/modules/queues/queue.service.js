@@ -1,5 +1,5 @@
 const prisma = require('../../config/db');
-const { STATUS_MODULE_CODES, resolveStatusIdFromCodes, resolveStatusById } = require('../../common/utils/status.util');
+const { STATUS_MODULE_CODES, resolveStatusIdFromCodes, resolveStatusById, resolveOrEnsureStatus } = require('../../common/utils/status.util');
 const { createAuditLog, buildChangeDetails } = require('../../common/utils/audit.util');
 const { getSocket } = require('../../config/socket');
 const { startStage, completeStage } = require('../processStageTracking/processStageTracking.service');
@@ -38,16 +38,18 @@ const syncJobCardStageTracking = async (tx, jobCardId, oldStatusId, newStatusId,
   }, tx);
 };
 
-const DEPARTMENT_ORDER = ['mechanical', 'body-shop'];
+const DEPARTMENT_ORDER = ['mechanical', 'body-shop', 'water-wash'];
 
 const DEPARTMENT_ALIASES = {
   mechanical: ['mechanical', 'mechanic', 'mechnanic', 'floor'],
-  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'denting']
+  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'denting'],
+  'water-wash': ['water-wash', 'water_wash', 'water wash', 'waterwash', 'washing', 'wash']
 };
 
 const BAY_TYPE_BY_DEPARTMENT = {
   mechanical: 'Mechanical',
-  'body-shop': 'Body Shop'
+  'body-shop': 'Body Shop',
+  'water-wash': 'Water Wash'
 };
 
 const ASSIGNMENT_STATUS_CODES = {
@@ -60,6 +62,11 @@ const ASSIGNMENT_STATUS_CODES = {
     assigned: ['BODY_SHOP_ASSIGNED'],
     inProgress: ['BODY_SHOP_IN_PROGRESS'],
     completed: ['BODY_SHOP_COMPLETED']
+  },
+  'water-wash': {
+    assigned: ['WATER_WASH_ASSIGNED', 'IN_PROGRESS', 'COMPLETED'],
+    inProgress: ['WATER_WASH_IN_PROGRESS', 'IN_PROGRESS'],
+    completed: ['WATER_WASH_COMPLETED', 'COMPLETED']
   }
 };
 
@@ -276,6 +283,11 @@ const getActiveQueueDepartment = (jobCard) => {
       continue;
     }
 
+    // Do not let water-wash preempt a repair department (mechanical / body-shop) that is still postponed
+    if (dept === 'water-wash' && firstPostponed) {
+      break;
+    }
+
     activeDepartment = dept;
     break;
   }
@@ -289,7 +301,13 @@ const canShowInDepartmentQueue = (jobCard, department) => {
   const activeDept = getActiveQueueDepartment(jobCard);
   if (activeDept !== department) return false;
 
-  if (areDepartmentServicesAssigned(jobCard, department)) {
+  if (department === 'water-wash') {
+    const services = getDepartmentServices(jobCard, 'water-wash').filter((service) => {
+      return isApprovedForWork(service) && !isRejectedAdditionalService(service);
+    });
+    if (services.length === 0) return false;
+    if (services.every(isJobCardServiceCompleted)) return false;
+  } else if (areDepartmentServicesAssigned(jobCard, department)) {
     return false;
   }
 
@@ -437,19 +455,27 @@ const toQueueResponse = (jobCard, department) => {
   const services = getDepartmentServices(jobCard, department)
     .filter((service) => isApprovedForWork(service) && !isRejectedAdditionalService(service));
 
-  // Bidirectional skip: show Skip Dept when OTHER department has unassigned, uncompleted work
+  // Bidirectional skip: show Skip Dept when OTHER department has unassigned, uncompleted work (only between mechanical and body-shop)
   let canSkip = false;
-  const otherDept = department === 'mechanical' ? 'body-shop' : 'mechanical';
-  const otherDeptHasServices = hasDepartmentServicesAvailableForWork(jobCard, otherDept);
-  const otherDeptCompleted = areDepartmentServicesCompleted(jobCard, otherDept);
-  const otherDeptAssigned = areDepartmentServicesAssigned(jobCard, otherDept);
-  if (otherDeptHasServices && !otherDeptCompleted && !otherDeptAssigned) {
-    canSkip = true;
+  if (department === 'mechanical' || department === 'body-shop') {
+    const otherDept = department === 'mechanical' ? 'body-shop' : 'mechanical';
+    const otherDeptHasServices = hasDepartmentServicesAvailableForWork(jobCard, otherDept);
+    const otherDeptCompleted = areDepartmentServicesCompleted(jobCard, otherDept);
+    const otherDeptAssigned = areDepartmentServicesAssigned(jobCard, otherDept);
+    if (otherDeptHasServices && !otherDeptCompleted && !otherDeptAssigned) {
+      canSkip = true;
+    }
   }
+
+  const isWaterWashInProgress = department === 'water-wash' && services.some((service) => {
+    const code = getStatusCode(service.serviceStatus);
+    return code === 'IN_PROGRESS';
+  });
 
   return {
     jobCardId: jobCard.id,
     canSkip,
+    isWaterWashInProgress,
     jobCardNo: jobCard.jobCardNo,
     vehicleNo: jobCard.vehicle ? jobCard.vehicle.registrationNo : null,
     customerName: jobCard.customer ? jobCard.customer.fullName : null,
@@ -1156,47 +1182,44 @@ const updateAssignmentStatus = async (assignmentId, payload, user) => {
           });
         }
 
-        // AUTO-RESUME LOGIC: Find earlier departments with POSTPONED services and revert them to PENDING
+        // AUTO-RESUME LOGIC: Find any other repair department with POSTPONED services and revert them to PENDING
         if (latestJobCard) {
-          const currentDeptIndex = DEPARTMENT_ORDER.indexOf(department);
-          if (currentDeptIndex > 0) {
-            const pendingServiceStatusId = await resolveRequiredStatusId(
-              tx,
-              STATUS_MODULE_CODES.JOB_CARD_SERVICE,
-              ['PENDING'],
-              'Pending job card service'
-            );
+          const pendingServiceStatusId = await resolveRequiredStatusId(
+            tx,
+            STATUS_MODULE_CODES.JOB_CARD_SERVICE,
+            ['PENDING'],
+            'Pending job card service'
+          );
 
-            for (let i = 0; i < currentDeptIndex; i++) {
-              const earlierDept = DEPARTMENT_ORDER[i];
-              const earlierServices = getDepartmentServices(latestJobCard, earlierDept);
+          for (const otherDept of ['mechanical', 'body-shop']) {
+            if (otherDept === department) continue;
+            const otherServices = getDepartmentServices(latestJobCard, otherDept);
 
-              for (const service of earlierServices) {
-                if (getStatusCode(service.serviceStatus) === 'POSTPONED') {
-                  // Revert to PENDING
-                  await tx.jobCardService.update({
-                    where: { id: service.id },
-                    data: { serviceStatusId: pendingServiceStatusId, modifiedById: user && user.userId ? user.userId : null }
-                  });
+            for (const service of otherServices) {
+              if (getStatusCode(service.serviceStatus) === 'POSTPONED') {
+                // Revert to PENDING
+                await tx.jobCardService.update({
+                  where: { id: service.id },
+                  data: { serviceStatusId: pendingServiceStatusId, modifiedById: user && user.userId ? user.userId : null }
+                });
 
-                  let resumeAction = null;
-                  try {
-                    resumeAction = await resolveRequiredStatusId(tx, 'service-history-actions', ['RESUME'], 'Resume');
-                  } catch (err) {
-                    resumeAction = pendingServiceStatusId;
-                  }
-
-                  await tx.jobCardServiceHistory.create({
-                    data: {
-                      jobCardServiceId: service.id,
-                      actionTypeId: resumeAction,
-                      fromStatusId: service.serviceStatusId,
-                      toStatusId: pendingServiceStatusId,
-                      reason: `Auto-resumed after ${department} completed`,
-                      changedById: user?.userId || 1
-                    }
-                  });
+                let resumeAction = null;
+                try {
+                  resumeAction = await resolveRequiredStatusId(tx, 'service-history-actions', ['RESUME'], 'Resume');
+                } catch (err) {
+                  resumeAction = pendingServiceStatusId;
                 }
+
+                await tx.jobCardServiceHistory.create({
+                  data: {
+                    jobCardServiceId: service.id,
+                    actionTypeId: resumeAction,
+                    fromStatusId: service.serviceStatusId,
+                    toStatusId: pendingServiceStatusId,
+                    reason: `Auto-resumed after ${department} completed`,
+                    changedById: user?.userId || 1
+                  }
+                });
               }
             }
           }
@@ -1264,9 +1287,164 @@ const updateAssignmentStatus = async (assignmentId, payload, user) => {
       details: buildChangeDetails(assignment, updatedAssignment, ['statusId', 'startedAt', 'completedAt'])
     });
 
+    const io = getSocket();
+    if (io) {
+      io.to(`location_${assignment.jobCard?.locationId}`).emit('queueUpdate', {
+        type: 'WORK_ASSIGNMENT_UPDATED',
+        jobCardId: assignment.jobCardId
+      });
+      io.emit('jobCardQueueUpdate', { locationId: assignment.jobCard?.locationId });
+      io.emit('jobCardStatusChanged', { jobCardId: assignment.jobCardId });
+    }
+
     return {
       assignment: toAssignmentResponse(updatedAssignment)
     };
+  }, { maxWait: 20000, timeout: 50000 });
+};
+
+const completeWaterWashWork = async (jobCardId, user) => {
+  const id = Number(jobCardId);
+  return prisma.$transaction(async (tx) => {
+    const jobCard = await tx.jobCard.findFirst({
+      where: { id, ...(user?.locationId ? { locationId: Number(user.locationId) } : {}) },
+      select: queueJobCardSelect
+    });
+
+    if (!jobCard) throw createHttpError(404, 'Job card not found');
+
+    const waterWashServices = getDepartmentServices(jobCard, 'water-wash')
+      .filter(s => isApprovedForWork(s) && !isRejectedAdditionalService(s) && !isJobCardServiceCompleted(s));
+
+    if (waterWashServices.length === 0) {
+      throw createHttpError(400, 'No active water wash services found to complete');
+    }
+
+    const completedServiceStatusId = await resolveRequiredStatusId(
+      tx,
+      STATUS_MODULE_CODES.JOB_CARD_SERVICE,
+      ['COMPLETED'],
+      'Water wash service completed'
+    );
+
+    const waterWashServiceIds = waterWashServices.map(s => s.id);
+
+    await tx.jobCardService.updateMany({
+      where: { id: { in: waterWashServiceIds } },
+      data: { serviceStatusId: completedServiceStatusId, modifiedById: user?.userId || null }
+    });
+
+    const refreshedJobCard = await tx.jobCard.findUnique({
+      where: { id },
+      select: queueJobCardSelect
+    });
+
+    const isJobCardComplete = refreshedJobCard && areAllJobCardServicesCompleted(refreshedJobCard);
+
+    if (isJobCardComplete) {
+      const readyForDeliveryStatusId = await resolveRequiredStatusId(
+        tx,
+        STATUS_MODULE_CODES.JOB_CARD_STATUS,
+        READY_FOR_DELIVERY_STATUS_CODES,
+        'Ready for delivery job card'
+      );
+
+      if (readyForDeliveryStatusId && refreshedJobCard.currentStatusId !== readyForDeliveryStatusId) {
+        await syncJobCardStageTracking(tx, id, refreshedJobCard.currentStatusId, readyForDeliveryStatusId, user);
+        await tx.jobCard.update({
+          where: { id },
+          data: { currentStatusId: readyForDeliveryStatusId, actualDeliveryAt: new Date(), modifiedById: user?.userId || null }
+        });
+      }
+    }
+
+    await completeDepartmentAssignmentPendingStage(tx, {
+      jobCard,
+      department: 'water-wash',
+      modifiedById: user?.userId || null
+    });
+
+    const io = getSocket();
+    if (io) {
+      io.to(`location_${jobCard.locationId}`).emit('queueUpdate', {
+        type: 'WATER_WASH_COMPLETED',
+        jobCardId: id
+      });
+      io.emit('jobCardQueueUpdate', { locationId: jobCard.locationId });
+      io.emit('jobCardStatusChanged', { jobCardId: id });
+    }
+
+    return { message: 'Water wash completed successfully' };
+  }, { maxWait: 20000, timeout: 50000 });
+};
+
+const startWaterWashWork = async (jobCardId, user) => {
+  const id = Number(jobCardId);
+  return prisma.$transaction(async (tx) => {
+    const jobCard = await tx.jobCard.findFirst({
+      where: { id, ...(user?.locationId ? { locationId: Number(user.locationId) } : {}) },
+      select: queueJobCardSelect
+    });
+
+    if (!jobCard) throw createHttpError(404, 'Job card not found');
+
+    const waterWashServices = getDepartmentServices(jobCard, 'water-wash')
+      .filter(s => isApprovedForWork(s) && !isRejectedAdditionalService(s) && !isJobCardServiceCompleted(s));
+
+    if (waterWashServices.length === 0) {
+      throw createHttpError(400, 'No active water wash services found to start');
+    }
+
+    const inProgressStatusId = await resolveRequiredStatusId(
+      tx,
+      STATUS_MODULE_CODES.JOB_CARD_SERVICE,
+      ['IN_PROGRESS'],
+      'Water wash service in progress'
+    );
+
+    const waterWashServiceIds = waterWashServices.map(s => s.id);
+
+    await tx.jobCardService.updateMany({
+      where: { id: { in: waterWashServiceIds } },
+      data: { serviceStatusId: inProgressStatusId, modifiedById: user?.userId || null }
+    });
+
+    await completeDepartmentAssignmentPendingStage(tx, {
+      jobCard,
+      department: 'water-wash',
+      modifiedById: user?.userId || null
+    });
+
+    const waterWashInProgressStatus = await resolveOrEnsureStatus(
+      tx,
+      STATUS_MODULE_CODES.JOB_CARD_STATUS,
+      'WATER_WASH_IN_PROGRESS',
+      'Water Wash In Progress',
+      31
+    );
+
+    if (waterWashInProgressStatus && jobCard.currentStatusId !== waterWashInProgressStatus.id) {
+      await syncJobCardStageTracking(tx, id, jobCard.currentStatusId, waterWashInProgressStatus.id, user);
+      await tx.jobCard.update({
+        where: { id },
+        data: {
+          currentStatusId: waterWashInProgressStatus.id,
+          modifiedById: user?.userId || null
+        }
+      });
+    }
+
+    const io = getSocket();
+    if (io) {
+      io.to(`location_${jobCard.locationId}`).emit('queueUpdate', {
+        type: 'WATER_WASH_STARTED',
+        jobCardId: id
+      });
+      io.emit('jobCardQueueUpdate', { locationId: jobCard.locationId });
+      io.emit('jobCardStatusChanged', { jobCardId: id });
+    }
+
+    return { message: 'Water wash started successfully' };
   }, { maxWait: 20000, timeout: 50000 });
 };
 
@@ -1274,5 +1452,7 @@ module.exports = {
   listQueue,
   assignWork,
   reassignWork,
-  updateAssignmentStatus
+  updateAssignmentStatus,
+  completeWaterWashWork,
+  startWaterWashWork
 };

@@ -1,11 +1,12 @@
 const { STATUS_MODULE_CODES, resolveStatusFromCodes } = require('../../common/utils/status.util');
 const { startStage, completeStage, cancelStage, skipStage } = require('./processStageTracking.service');
 
-const DEPARTMENT_ORDER = ['mechanical', 'body-shop'];
+const DEPARTMENT_ORDER = ['mechanical', 'body-shop', 'water-wash'];
 
 const DEPARTMENT_ALIASES = {
   mechanical: ['mechanical', 'mechanic', 'mechnanic', 'floor', 'general service', 'engine', 'electrical'],
-  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'painting', 'denting', 'denting-painting', 'denting-&-painting', 'denting & painting', 'tinkering', 'bodywork', 'collision']
+  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'painting', 'denting', 'denting-painting', 'denting-&-painting', 'denting & painting', 'tinkering', 'bodywork', 'collision'],
+  'water-wash': ['water-wash', 'water_wash', 'water wash', 'waterwash', 'washing', 'wash']
 };
 
 const ASSIGNMENT_PENDING_STATUS_CODES = {

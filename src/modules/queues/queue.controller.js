@@ -71,10 +71,53 @@ const updateAssignmentStatus = async (req, res, next) => {
 
 
 
+const listWaterWashQueue = async (req, res, next) => {
+  try {
+    const result = await queueService.listQueue('water-wash', req.query, req.user);
+
+    return apiResponse(res, {
+      message: 'Water wash queue fetched successfully',
+      data: result.queue,
+      meta: result.meta
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const completeWaterWash = async (req, res, next) => {
+  try {
+    const data = await queueService.completeWaterWashWork(req.params.jobCardId, req.user);
+
+    return apiResponse(res, {
+      message: 'Water wash completed successfully',
+      data
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const startWaterWash = async (req, res, next) => {
+  try {
+    const data = await queueService.startWaterWashWork(req.params.jobCardId, req.user);
+
+    return apiResponse(res, {
+      message: 'Water wash started successfully',
+      data
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
 module.exports = {
   listMechanicalQueue,
   listBodyShopQueue,
+  listWaterWashQueue,
   assignWork,
   reassignWork,
-  updateAssignmentStatus
+  updateAssignmentStatus,
+  completeWaterWash,
+  startWaterWash
 };

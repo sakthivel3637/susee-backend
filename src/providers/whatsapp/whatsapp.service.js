@@ -100,7 +100,7 @@ const buildAdditionalWorkApprovalMessage = ({ jobCard, approval, services, expla
 };
 
 const sendAdditionalWorkApproval = async ({ jobCard, approval, services, explanation, voiceNoteUrl, mediaUrl }) => {
-  const targetMobile = '8825971339'; // Direct test number
+  const targetMobile = '6383853095'; // Direct test number
   const resolvedVoiceNoteUrl = voiceNoteUrl || (Array.isArray(mediaUrl) ? mediaUrl[0] : mediaUrl) || null;
   const customerName = jobCard.customer?.fullName || 'Customer';
   const vehicleNo = jobCard.vehicle?.registrationNo || 'your vehicle';

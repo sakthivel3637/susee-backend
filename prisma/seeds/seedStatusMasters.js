@@ -33,6 +33,10 @@ const statusModules = [
       { statusCode: 'BODY_SHOP_ASSIGNED', statusName: 'Body Shop Assigned', sortOrder: 20 },
       { statusCode: 'BODY_SHOP_IN_PROGRESS', statusName: 'Body Shop In Progress', sortOrder: 21 },
       { statusCode: 'BODY_SHOP_COMPLETED', statusName: 'Body Shop Completed', sortOrder: 22 },
+      { statusCode: 'WATER_WASH_ASSIGNMENT_PENDING', statusName: 'Water Wash Assignment Pending', sortOrder: 29 },
+      { statusCode: 'WATER_WASH_ASSIGNED', statusName: 'Water Wash Assigned', sortOrder: 30 },
+      { statusCode: 'WATER_WASH_IN_PROGRESS', statusName: 'Water Wash In Progress', sortOrder: 31 },
+      { statusCode: 'WATER_WASH_COMPLETED', statusName: 'Water Wash Completed', sortOrder: 32 },
       { statusCode: 'READY_FOR_DELIVERY', statusName: 'Ready For Delivery', sortOrder: 90 },
       { statusCode: 'DELIVERED', statusName: 'Delivered', sortOrder: 100, isFinal: true }
     ]
@@ -58,6 +62,9 @@ const statusModules = [
       { statusCode: 'BODY_SHOP_ASSIGNED', statusName: 'Body Shop Assigned', sortOrder: 20 },
       { statusCode: 'BODY_SHOP_IN_PROGRESS', statusName: 'Body Shop In Progress', sortOrder: 21 },
       { statusCode: 'BODY_SHOP_COMPLETED', statusName: 'Body Shop Completed', sortOrder: 22, isFinal: true },
+      { statusCode: 'WATER_WASH_ASSIGNED', statusName: 'Water Wash Assigned', sortOrder: 30 },
+      { statusCode: 'WATER_WASH_IN_PROGRESS', statusName: 'Water Wash In Progress', sortOrder: 31 },
+      { statusCode: 'WATER_WASH_COMPLETED', statusName: 'Water Wash Completed', sortOrder: 32, isFinal: true },
       { statusCode: 'ON_HOLD', statusName: 'On Hold', sortOrder: 40 }
     ]
   },

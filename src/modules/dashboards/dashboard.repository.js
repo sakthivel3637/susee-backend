@@ -526,6 +526,9 @@ const getManagerDashboard = async ({ locationId, page = 1, limit = 5 } = {}) => 
       else if (statusCode.includes('ASSIGNED')) bodyWaiting++;
       stageTone = 'purple';
       displayStage = 'Body Shop';
+    } else if (statusCode.includes('WATER_WASH')) {
+      stageTone = 'info';
+      displayStage = 'Water Wash';
     } else if (statusCode.includes('PENDING')) {
       stageTone = 'danger';
     } else if (statusCode.includes('COMPLETED') || statusCode.includes('DELIVERED')) {
@@ -754,6 +757,8 @@ const getTvKioskDashboard = async ({ locationId } = {}) => {
     let column = 'MECHANICAL';
     if (statusCode === 'READY_FOR_DELIVERY' || statusCode.includes('DELIVERY')) {
       column = 'READY_FOR_DELIVERY';
+    } else if (statusCode.includes('WATER_WASH')) {
+      column = 'WATER_WASH';
     } else if (statusCode.includes('BODY_SHOP') || statusCode.includes('PAINT')) {
       column = 'BODY_SHOP';
     } else if (statusCode.includes('MECHANICAL')) {
