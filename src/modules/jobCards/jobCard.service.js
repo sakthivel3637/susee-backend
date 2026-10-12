@@ -61,8 +61,8 @@ const APPROVAL_APPROVED_STATUS_CODES = ['APPROVED'];
 const APPROVAL_REJECTED_STATUS_CODES = ['REJECTED'];
 const DEPARTMENT_ORDER = ['mechanical', 'body-shop', 'water-wash'];
 const DEPARTMENT_ALIASES = {
-  mechanical: ['mechanical', 'mechanic', 'mechnanic', 'floor'],
-  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'denting'],
+  mechanical: ['mechanical', 'mechanic', 'mechnanic', 'floor', 'general service', 'engine', 'electrical'],
+  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'painting', 'denting', 'denting-painting', 'denting-&-painting', 'denting & painting', 'tinkering', 'bodywork', 'collision'],
   'water-wash': ['water-wash', 'water_wash', 'water wash', 'waterwash', 'washing', 'wash']
 };
 const ASSIGNMENT_STATUS_CODES = {
@@ -258,10 +258,14 @@ const resolveServiceSelections = async (tx, payloadServices) => {
 };
 
 const normalizeDepartment = (value) => {
+  if (!value) return null;
   const normalizedValue = normalizeText(value);
 
   return DEPARTMENT_ORDER.find((department) => {
-    return DEPARTMENT_ALIASES[department].some((alias) => normalizeText(alias) === normalizedValue);
+    return DEPARTMENT_ALIASES[department].some((alias) => {
+      const normAlias = normalizeText(alias);
+      return normalizedValue === normAlias || normalizedValue.includes(normAlias) || normAlias.includes(normalizedValue);
+    });
   });
 };
 
@@ -350,7 +354,7 @@ const getServiceDepartment = (service) => {
     const dept = normalizeDepartment(service.categoryName);
     if (dept) return dept;
   }
-  return null;
+  return 'mechanical';
 };
 
 const getQueryDepartment = (query, user) => {
@@ -620,9 +624,19 @@ const deriveJobCardStatus = async (tx, jobCard) => {
       continue;
     }
 
-    // Do not let water-wash preempt a repair department that is still postponed
-    if (department === 'water-wash' && firstPostponed) {
-      break;
+    // Do not let water-wash preempt a repair department that is still postponed or incomplete
+    if (department === 'water-wash') {
+      const repairDepartments = ['mechanical', 'body-shop'];
+      const hasIncompleteRepair = repairDepartments.some((repairDept) => {
+        const repairServices = getDepartmentServices(jobCard, repairDept).filter(service =>
+          (isApprovedForWork(service) && !isRejectedAdditionalService(service)) ||
+          isPendingAdditionalService(service)
+        );
+        return repairServices.length > 0 && !repairServices.every(isJobCardServiceCompleted);
+      });
+      if (hasIncompleteRepair || firstPostponed) {
+        break;
+      }
     }
 
     activeDepartment = department;

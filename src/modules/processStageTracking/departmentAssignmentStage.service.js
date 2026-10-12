@@ -174,25 +174,54 @@ const canStartAssignmentPendingForDepartment = (jobCard, department) => {
     return false;
   }
 
-  if (isDepartmentPostponed(jobCard, department)) {
+  // 1. Water wash is strictly the final department.
+  //    It can ONLY start if all repair departments (mechanical and body-shop) are completely finished.
+  //    A postponed repair department is NOT completed!
+  if (department === 'water-wash') {
+    const repairDepartments = ['mechanical', 'body-shop'];
+    return repairDepartments.every((repairDept) => {
+      if (!hasDepartmentServicesAvailableForWork(jobCard, repairDept)) return true;
+      return areDepartmentServicesCompleted(jobCard, repairDept);
+    });
+  }
+
+  // 2. For repair departments (mechanical and body-shop):
+  const otherRepairDept = department === 'mechanical' ? 'body-shop' : 'mechanical';
+
+  // If the other repair department has no work or is completely finished:
+  if (!hasDepartmentServicesAvailableForWork(jobCard, otherRepairDept) || areDepartmentServicesCompleted(jobCard, otherRepairDept)) {
+    return true;
+  }
+
+  // Both repair departments have uncompleted work.
+  // If the other repair department is currently assigned or has active work in progress:
+  if (areDepartmentServicesAssigned(jobCard, otherRepairDept)) {
+    return false;
+  }
+  const otherInProgress = getDepartmentServices(jobCard, otherRepairDept).some((s) => {
+    const code = getStatusCode(s.serviceStatus);
+    return code === 'IN_PROGRESS' || code.includes('IN_PROGRESS');
+  });
+  if (otherInProgress) {
     return false;
   }
 
-  const otherDepartments = DEPARTMENT_ORDER.filter((d) => d !== department);
+  // If this department is postponed and the other repair department is NOT postponed:
+  // this department was skipped in favor of the other. Let the other be assigned!
+  if (isDepartmentPostponed(jobCard, department) && !isDepartmentPostponed(jobCard, otherRepairDept)) {
+    return false;
+  }
 
-  return otherDepartments.every((otherDept) => {
-    if (!hasDepartmentServicesAvailableForWork(jobCard, otherDept)) return true;
-    if (areDepartmentServicesCompleted(jobCard, otherDept)) return true;
-    if (isDepartmentPostponed(jobCard, otherDept)) return true;
+  // If the other repair department is postponed and this department is NOT postponed:
+  // the other was skipped in favor of this department. This department can start!
+  if (!isDepartmentPostponed(jobCard, department) && isDepartmentPostponed(jobCard, otherRepairDept)) {
+    return true;
+  }
 
-    if (areDepartmentServicesAssigned(jobCard, otherDept)) {
-      return false;
-    }
-
-    const departmentIndex = DEPARTMENT_ORDER.indexOf(department);
-    const otherIndex = DEPARTMENT_ORDER.indexOf(otherDept);
-    return departmentIndex < otherIndex;
-  });
+  // If neither (or both) are postponed, follow default department order (mechanical before body-shop):
+  const departmentIndex = DEPARTMENT_ORDER.indexOf(department);
+  const otherIndex = DEPARTMENT_ORDER.indexOf(otherRepairDept);
+  return departmentIndex < otherIndex;
 };
 
 const getNextAssignmentPendingDepartment = (jobCard) => {
@@ -233,6 +262,45 @@ const startDepartmentAssignmentPendingStage = async (tx, { jobCard, department, 
     return null;
   }
 
+  // Auto-resume any postponed approved services in this department since its turn has arrived
+  const postponedServices = getDepartmentServices(jobCard, department).filter((service) => {
+    return getStatusCode(service.serviceStatus) === 'POSTPONED' && isApprovedForWork(service) && !isRejectedAdditionalService(service);
+  });
+
+  if (postponedServices.length > 0) {
+    const pendingStatus = await resolveStatusFromCodes(tx, STATUS_MODULE_CODES.JOB_CARD_SERVICE, ['PENDING']);
+    if (pendingStatus) {
+      for (const service of postponedServices) {
+        await tx.jobCardService.update({
+          where: { id: service.id },
+          data: {
+            serviceStatusId: pendingStatus.id,
+            modifiedById: createdById
+          }
+        });
+
+        let resumeAction = null;
+        try {
+          resumeAction = await resolveStatusFromCodes(tx, 'service-history-actions', ['RESUME']);
+        } catch (err) { /* ignore */ }
+
+        await tx.jobCardServiceHistory.create({
+          data: {
+            jobCardServiceId: service.id,
+            actionTypeId: resumeAction ? resumeAction.id : pendingStatus.id,
+            fromStatusId: service.serviceStatusId,
+            toStatusId: pendingStatus.id,
+            reason: `Auto-resumed as ${department} assignment started`,
+            changedById: createdById || 1
+          }
+        });
+
+        service.serviceStatusId = pendingStatus.id;
+        service.serviceStatus = pendingStatus;
+      }
+    }
+  }
+
   if (jobCard.currentStatusId !== status.id) {
     if (jobCard.id) {
       await completeStage({
@@ -248,6 +316,8 @@ const startDepartmentAssignmentPendingStage = async (tx, { jobCard, department, 
         modifiedById: createdById
       }
     });
+    jobCard.currentStatusId = status.id;
+    jobCard.currentStatus = status;
   }
 
   return startStage({
@@ -325,8 +395,10 @@ const cancelDepartmentAssignmentPendingStage = async (tx, { jobCard, department,
 };
 
 const syncAssignmentPendingStages = async (tx, { jobCard, actorUserId = null }) => {
+  const nextDepartment = getNextAssignmentPendingDepartment(jobCard);
+
   for (const department of DEPARTMENT_ORDER) {
-    if (!hasDepartmentServicesAvailableForWork(jobCard, department) || isDepartmentPostponed(jobCard, department)) {
+    if (department !== nextDepartment) {
       await cancelDepartmentAssignmentPendingStage(tx, {
         jobCard,
         department,
@@ -335,8 +407,13 @@ const syncAssignmentPendingStages = async (tx, { jobCard, actorUserId = null }) 
     }
   }
 
-  return startNextAssignmentPendingStage(tx, {
+  if (!nextDepartment) {
+    return null;
+  }
+
+  return startDepartmentAssignmentPendingStage(tx, {
     jobCard,
+    department: nextDepartment,
     createdById: actorUserId
   });
 };

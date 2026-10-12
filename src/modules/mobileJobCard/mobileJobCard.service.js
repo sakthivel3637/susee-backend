@@ -2519,6 +2519,50 @@ const updateJobCardServices = async (jobCardId, servicesPayload, user) => {
       }
     }
 
+    // Auto-resume postponed services in other repair department if a department reached completion
+    const currentServices = await tx.jobCardService.findMany({
+      where: { jobCardId: parsedJobCardId },
+      include: {
+        serviceItem: { include: { category: true } },
+        serviceStatus: true,
+        approvalStatus: true,
+        workAssignments: true
+      }
+    });
+
+    for (const dept of ['mechanical', 'body-shop']) {
+      const deptServices = currentServices.filter(s => {
+        const d = getServiceDepartment(s);
+        const appr = String(s.approvalStatus?.statusCode || '').trim().toUpperCase();
+        return d === dept && (!s.isAdditional || appr === 'APPROVED');
+      });
+      const isDeptNowComplete = deptServices.length > 0 && deptServices.every(s => {
+        const sc = String(s.serviceStatus?.statusCode || '').trim().toUpperCase();
+        return sc === 'COMPLETED' || sc.endsWith('_COMPLETED') || sc === 'REJECTED' || sc === 'CANCELLED';
+      });
+      if (isDeptNowComplete) {
+        const otherDept = dept === 'mechanical' ? 'body-shop' : 'mechanical';
+        const otherPostponed = currentServices.filter(s => {
+          const d = getServiceDepartment(s);
+          const sc = String(s.serviceStatus?.statusCode || '').trim().toUpperCase();
+          return d === otherDept && sc === 'POSTPONED';
+        });
+        if (otherPostponed.length > 0) {
+          const pendingStatus = await tx.statusMaster.findFirst({
+            where: { statusCode: 'PENDING', module: { is: { moduleCode: 'job-card-service', isActive: true } }, isActive: true }
+          });
+          if (pendingStatus) {
+            for (const s of otherPostponed) {
+              await tx.jobCardService.update({
+                where: { id: s.id },
+                data: { serviceStatusId: pendingStatus.id, modifiedById: user?.userId || null }
+              });
+            }
+          }
+        }
+      }
+    }
+
     // Recalculate job card status based on updated services
     const updatedJobCard = await tx.jobCard.findUnique({
       where: { id: parsedJobCardId },
