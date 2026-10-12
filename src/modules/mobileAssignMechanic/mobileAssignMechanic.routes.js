@@ -7,5 +7,7 @@ router.use(authenticate);
 router.get('/list', controller.getMobileList);
 router.post('/assign/:jobCardId', controller.assignWork);
 router.post('/skip/:jobCardId/:department', controller.skipDepartment);
+router.post('/water-wash/start/:jobCardId', controller.startWaterWash);
+router.post('/water-wash/complete/:jobCardId', controller.completeWaterWash);
 
 module.exports = router;
