@@ -30,8 +30,28 @@ const skipDepartment = async (req, res, next) => {
   }
 };
 
+const startWaterWash = async (req, res, next) => {
+  try {
+    const result = await mobileAssignMechanicService.startWaterWash(req.params.jobCardId, req.user);
+    return res.status(200).json(result);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const completeWaterWash = async (req, res, next) => {
+  try {
+    const result = await mobileAssignMechanicService.completeWaterWash(req.params.jobCardId, req.user);
+    return res.status(200).json(result);
+  } catch (error) {
+    return next(error);
+  }
+};
+
 module.exports = {
   getMobileList,
   assignWork,
-  skipDepartment
+  skipDepartment,
+  startWaterWash,
+  completeWaterWash
 };
