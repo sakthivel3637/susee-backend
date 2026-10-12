@@ -79,7 +79,8 @@ const ASSIGNMENT_STATUS_CODES = {
 };
 const ASSIGNMENT_PENDING_STATUS_CODES = {
   mechanical: 'MECHANICAL_ASSIGNMENT_PENDING',
-  'body-shop': 'BODY_SHOP_ASSIGNMENT_PENDING'
+  'body-shop': 'BODY_SHOP_ASSIGNMENT_PENDING',
+  'water-wash': 'WATER_WASH_ASSIGNMENT_PENDING'
 };
 const READY_FOR_DELIVERY_STATUS_CODES = ['READY_FOR_DELIVERY'];
 const FINAL_JOB_CARD_STATUS_CODES = ['DELIVERED', 'REJECTED'];
@@ -643,7 +644,13 @@ const deriveJobCardStatus = async (tx, jobCard) => {
           31
         );
       }
-      return null;
+      return resolveOrEnsureStatus(
+        tx,
+        STATUS_MODULE_CODES.JOB_CARD_STATUS,
+        'WATER_WASH_ASSIGNMENT_PENDING',
+        'Water Wash Assignment Pending',
+        29
+      );
     }
 
     // For the final status resolution only use approved (non-pending) services
@@ -803,7 +810,10 @@ const computeWorkType = (jobCard) => {
     }
   }
 
-  if (hasMechanical && hasBodyShop) return 'Both';
+  if (hasMechanical && hasBodyShop && hasWaterWash) return 'All';
+  if (hasMechanical && hasBodyShop) return 'Mech & Body';
+  if (hasMechanical && hasWaterWash) return 'Mech & Wash';
+  if (hasBodyShop && hasWaterWash) return 'Body & Wash';
   if (hasBodyShop) return 'Body Shop';
   if (hasMechanical) return 'Mechanic';
   if (hasWaterWash) return 'Water Wash';
@@ -956,6 +966,16 @@ const listJobCards = async (query, user) => {
           }
         }
       };
+    } else if (statusCodes.some((code) => code.includes('WATER_WASH'))) {
+      where.services = {
+        some: {
+          serviceItem: {
+            category: {
+              slug: { in: ['water-wash', 'water_wash', 'water wash', 'waterwash', 'washing', 'wash'] }
+            }
+          }
+        }
+      };
     }
   }
 
@@ -971,7 +991,11 @@ const listJobCards = async (query, user) => {
     }
   }
 
-  if (query.tab === 'waterwash' || (department && department.includes('water-wash') && !query.status)) {
+  const isWaterWashOnlyDepartment = Array.isArray(department)
+    ? (department.length === 1 && department[0] === 'water-wash')
+    : (department === 'water-wash');
+
+  if (query.tab === 'waterwash' || isWaterWashOnlyDepartment) {
     where.services = {
       some: {
         serviceItem: {
@@ -981,9 +1005,11 @@ const listJobCards = async (query, user) => {
         }
       }
     };
-    where.currentStatus = {
-      statusCode: { notIn: ['DELIVERED', 'REJECTED'] }
-    };
+    if (!query.status) {
+      where.currentStatus = {
+        statusCode: { in: ['WATER_WASH_ASSIGNMENT_PENDING', 'WATER_WASH_IN_PROGRESS', 'WATER_WASH_ASSIGNED'] }
+      };
+    }
   } else if (department && department.length > 0) {
     where.services = {
       some: {

@@ -11,7 +11,8 @@ const DEPARTMENT_ALIASES = {
 
 const ASSIGNMENT_PENDING_STATUS_CODES = {
   mechanical: 'MECHANICAL_ASSIGNMENT_PENDING',
-  'body-shop': 'BODY_SHOP_ASSIGNMENT_PENDING'
+  'body-shop': 'BODY_SHOP_ASSIGNMENT_PENDING',
+  'water-wash': 'WATER_WASH_ASSIGNMENT_PENDING'
 };
 const FINAL_JOB_CARD_STATUS_CODES = ['DELIVERED', 'REJECTED'];
 const REJECTED_APPROVAL_STATUS_CODES = ['REJECTED'];
@@ -162,7 +163,14 @@ const canStartAssignmentPendingForDepartment = (jobCard, department) => {
     return false;
   }
 
-  if (areDepartmentServicesAssigned(jobCard, department) || areDepartmentServicesCompleted(jobCard, department)) {
+  if (
+    areDepartmentServicesAssigned(jobCard, department) ||
+    areDepartmentServicesCompleted(jobCard, department) ||
+    (department === 'water-wash' && getDepartmentServices(jobCard, 'water-wash').some((s) => {
+      const code = getStatusCode(s.serviceStatus);
+      return code === 'IN_PROGRESS' || code.includes('IN_PROGRESS');
+    }))
+  ) {
     return false;
   }
 

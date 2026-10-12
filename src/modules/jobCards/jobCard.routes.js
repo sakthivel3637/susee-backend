@@ -7,7 +7,7 @@ const { permissionMiddleware } = require('../../common/middleware/permission.mid
 
 const canReadJobCards = permissionMiddleware('/job-cards', 'canRead');
 const canUpdateJobCards = permissionMiddleware('/job-cards', 'canUpdate');
-const canReadAdditionalWork = permissionMiddleware(['/additional-work', '/body-shop-additional-work'], 'canRead');
+const canReadAdditionalWork = permissionMiddleware(['/additional-work', '/body-shop-additional-work', '/water-wash', '/job-cards'], 'canRead');
 
 router.use(authenticate);
 
