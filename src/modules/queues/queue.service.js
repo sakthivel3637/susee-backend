@@ -169,6 +169,11 @@ const isCompletedStatusCode = (statusCode) => {
   );
 };
 
+const isInProgressStatusCode = (statusCode) => {
+  const code = String(statusCode || '').trim().toUpperCase();
+  return code === 'IN_PROGRESS' || code.endsWith('_IN_PROGRESS');
+};
+
 const getDepartmentServices = (jobCard, department) => {
   return (jobCard.services || []).filter((service) => getServiceDepartment(service) === department);
 };
@@ -307,6 +312,20 @@ const canShowInDepartmentQueue = (jobCard, department) => {
     });
     if (services.length === 0) return false;
     if (services.every(isJobCardServiceCompleted)) return false;
+
+    const isWaterWashStarted = services.some((service) => {
+      const code = getStatusCode(service.serviceStatus);
+      return isInProgressStatusCode(code) || isCompletedStatusCode(code);
+    });
+    const currentStatusCode = getStatusCode(jobCard.currentStatus);
+    if (
+      isWaterWashStarted ||
+      currentStatusCode === 'WATER_WASH_IN_PROGRESS' ||
+      currentStatusCode === 'WATER_WASH_COMPLETED' ||
+      currentStatusCode === 'WATER_WASH_ASSIGNED'
+    ) {
+      return false;
+    }
   } else if (areDepartmentServicesAssigned(jobCard, department)) {
     return false;
   }

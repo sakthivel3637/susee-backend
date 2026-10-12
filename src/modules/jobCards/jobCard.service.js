@@ -1007,7 +1007,7 @@ const listJobCards = async (query, user) => {
     };
     if (!query.status) {
       where.currentStatus = {
-        statusCode: { in: ['WATER_WASH_ASSIGNMENT_PENDING', 'WATER_WASH_IN_PROGRESS', 'WATER_WASH_ASSIGNED'] }
+        statusCode: { in: ['WATER_WASH_IN_PROGRESS', 'WATER_WASH_ASSIGNED'] }
       };
     }
   } else if (department && department.length > 0) {
@@ -1546,6 +1546,11 @@ const updateJobCard = async (id, payload, user) => {
 
   if (!existingJobCard) {
     throw createHttpError(404, 'Job Card not found');
+  }
+
+  const currentJobCardStatusCode = getStatusCode(existingJobCard.currentStatus);
+  if (FINAL_JOB_CARD_STATUS_CODES.includes(currentJobCardStatusCode) || currentJobCardStatusCode.includes('DELIVERED')) {
+    throw createHttpError(400, 'Cannot modify a finalized/delivered job card');
   }
 
   const jobCardId = existingJobCard.id;
