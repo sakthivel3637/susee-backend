@@ -787,6 +787,7 @@ const getServiceDepartment = (service) => {
   
   const norm = String(dept).toLowerCase();
   if (norm.includes('body')) return 'body-shop';
+  if (norm.includes('water') || norm.includes('wash')) return 'water-wash';
   return 'mechanical';
 };
 
@@ -797,14 +798,16 @@ const computeWorkType = (jobCard) => {
 
   let hasMechanical = false;
   let hasBodyShop = false;
+  let hasWaterWash = false;
 
   for (const s of allServices) {
     const dept = getServiceDepartment(s);
     if (dept === 'mechanical') hasMechanical = true;
     if (dept === 'body-shop') hasBodyShop = true;
+    if (dept === 'water-wash') hasWaterWash = true;
   }
 
-  if (!hasMechanical && !hasBodyShop) {
+  if (!hasMechanical && !hasBodyShop && !hasWaterWash) {
     const statusCode = String(jobCard.currentStatus?.statusCode || '').toUpperCase();
     if (statusCode.includes('BODY_SHOP')) {
       hasBodyShop = true;
@@ -813,8 +816,13 @@ const computeWorkType = (jobCard) => {
     }
   }
 
-  if (hasMechanical && hasBodyShop) return 'Both';
+  if (hasMechanical && hasBodyShop && hasWaterWash) return 'All';
+  if (hasMechanical && hasBodyShop) return 'Mech & Body';
+  if (hasMechanical && hasWaterWash) return 'Mech & Wash';
+  if (hasBodyShop && hasWaterWash) return 'Body & Wash';
   if (hasBodyShop) return 'Body Shop';
+  if (hasMechanical) return 'Mechanic';
+  if (hasWaterWash) return 'Water Wash';
   return 'Mechanic';
 };
 
