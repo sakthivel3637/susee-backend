@@ -69,6 +69,17 @@ async function getUserNotifications(userId, limit = 20, offset = 0, unreadOnly =
     prisma.notification.findMany({
       where,
       include: {
+        processStageTracking: {
+          select: {
+            id: true,
+            status: {
+              select: {
+                statusCode: true,
+                statusName: true
+              }
+            }
+          }
+        },
         jobCard: {
           select: {
             slug: true,

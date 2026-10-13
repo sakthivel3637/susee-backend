@@ -10,6 +10,7 @@ const storageProvider = createStorageProvider();
 const { STATUS_MODULE_CODES, resolveStatusFromCodes, resolveStatusIdFromCodes, statusModuleFilter } = require('../../common/utils/status.util');
 const { completeStage } = require('../processStageTracking/processStageTracking.service');
 const { startNextAssignmentPendingStage, syncAssignmentPendingStages } = require('../processStageTracking/departmentAssignmentStage.service');
+const { getServiceDepartment, normalizeDepartment } = require('../../common/utils/department.util');
 const jobCardService = require('../jobCards/jobCard.service');
 
 const JOB_CARD_CREATED_STATUS_CODES = ['JOB_CARD_CREATED', 'CREATED'];
@@ -774,22 +775,6 @@ const toBrandResponse = (brand) => brand
   }
   : null;
 
-const getServiceDepartment = (service) => {
-  if (!service) return null;
-  let dept = null;
-  const category = service.serviceItem ? service.serviceItem.category : (service.category || null);
-  if (category) {
-    dept = category.slug || category.name;
-  } else if (service.categoryName) {
-    dept = service.categoryName;
-  }
-  if (!dept) return null;
-  
-  const norm = String(dept).toLowerCase();
-  if (norm.includes('body')) return 'body-shop';
-  if (norm.includes('water') || norm.includes('wash')) return 'water-wash';
-  return 'mechanical';
-};
 
 const computeWorkType = (jobCard) => {
   const services = jobCard.services || [];
@@ -1911,6 +1896,21 @@ const createFromGateEntry = async (payload, user, files = []) => {
       });
     }
 
+    const serviceDepts = resolvedServiceItems.map((item) => getServiceDepartment(item)).filter(Boolean);
+    const initialDept = serviceDepts.includes('mechanical')
+      ? 'mechanical'
+      : serviceDepts.includes('body-shop')
+        ? 'body-shop'
+        : serviceDepts.includes('water-wash')
+          ? 'water-wash'
+          : 'mechanical';
+
+    const initialAssignmentStatusCode = initialDept === 'body-shop'
+      ? 'BODY_SHOP_ASSIGNMENT_PENDING'
+      : initialDept === 'water-wash'
+        ? 'WATER_WASH_ASSIGNMENT_PENDING'
+        : 'MECHANICAL_ASSIGNMENT_PENDING';
+
     let currentStatusId = await resolveStatusIdFromCodes(
       tx,
       STATUS_MODULE_CODES.JOB_CARD_STATUS,
@@ -1927,7 +1927,6 @@ const createFromGateEntry = async (payload, user, files = []) => {
     if (customerApprovalDecision) {
       const isApproved = customerApprovalDecision === 'APPROVED';
       const approvalStatusCodes = isApproved ? APPROVAL_APPROVED_STATUS_CODES : APPROVAL_REJECTED_STATUS_CODES;
-      const jobCardStatusCodes = isApproved ? JOB_CARD_APPROVED_STATUS_CODES : JOB_CARD_REJECTED_STATUS_CODES;
 
       approvalStatusId = await resolveRequiredStatusId(
         tx,
@@ -1936,14 +1935,28 @@ const createFromGateEntry = async (payload, user, files = []) => {
         `${customerApprovalDecision.toLowerCase()} approval`
       );
       serviceApprovalStatusId = approvalStatusId;
-      currentStatusId = await resolveRequiredStatusId(
-        tx,
-        STATUS_MODULE_CODES.JOB_CARD_STATUS,
-        jobCardStatusCodes,
-        `${customerApprovalDecision.toLowerCase()} job card`
-      );
 
-      if (!isApproved) {
+      if (isApproved) {
+        const specificStatus = await resolveStatusFromCodes(
+          tx,
+          STATUS_MODULE_CODES.JOB_CARD_STATUS,
+          [initialAssignmentStatusCode]
+        );
+        currentStatusId = specificStatus
+          ? specificStatus.id
+          : await resolveRequiredStatusId(
+            tx,
+            STATUS_MODULE_CODES.JOB_CARD_STATUS,
+            JOB_CARD_APPROVED_STATUS_CODES,
+            'approved job card'
+          );
+      } else {
+        currentStatusId = await resolveRequiredStatusId(
+          tx,
+          STATUS_MODULE_CODES.JOB_CARD_STATUS,
+          JOB_CARD_REJECTED_STATUS_CODES,
+          'rejected job card'
+        );
         serviceStatusId = await resolveRequiredStatusId(
           tx,
           STATUS_MODULE_CODES.JOB_CARD_SERVICE,
@@ -2060,9 +2073,13 @@ const createFromGateEntry = async (payload, user, files = []) => {
         gateEntryId: true,
         customerId: true,
         vehicleId: true,
+        currentStatusId: true,
         currentStatus: {
           select: {
-            statusCode: true
+            id: true,
+            statusCode: true,
+            statusName: true,
+            moduleId: true
           }
         },
         approvalStatus: {
@@ -2073,6 +2090,8 @@ const createFromGateEntry = async (payload, user, files = []) => {
         services: {
           select: {
             id: true,
+            serviceName: true,
+            serviceItemId: true,
             isAdditional: true,
             serviceStatus: {
               select: {
@@ -2097,8 +2116,12 @@ const createFromGateEntry = async (payload, user, files = []) => {
             },
             serviceItem: {
               select: {
+                id: true,
+                name: true,
+                slug: true,
                 category: {
                   select: {
+                    id: true,
                     name: true,
                     slug: true
                   }
@@ -2111,32 +2134,23 @@ const createFromGateEntry = async (payload, user, files = []) => {
     });
 
     if (trackingJobCard) {
-      await startNextAssignmentPendingStage(tx, {
+      await syncAssignmentPendingStages(tx, {
         jobCard: trackingJobCard,
-        createdById: user.userId || null
+        actorUserId: user.userId || null
       });
     }
 
-    const mediaRows = buildMediaRows({
-      uploadedPhotos,
-      vehicleId: gateEntry.vehicleId,
-      actorUserId: user.userId
-    });
-
-    if (mediaRows.length > 0) {
-      await tx.mediaFile.createMany({
-        data: mediaRows
+    const finalStatusId = trackingJobCard?.currentStatusId || currentStatusId;
+    if (finalStatusId) {
+      await tx.jobCardStatusLog.create({
+        data: {
+          jobCardId: jobCard.id,
+          statusId: finalStatusId,
+          changedById: user.userId || null,
+          remarks: `Job card created and ${initialDept} assignment stage initiated`
+        }
       });
     }
-
-    // await tx.jobCardStatusLog.create({
-    //   data: {
-    //     jobCardId: jobCard.id,
-    //     statusId: currentStatusId,
-    //     changedById: user.userId || null,
-    //     remarks: 'Job card created from gate entry'
-    //   }
-    // });
 
     await createAudit(tx, {
       tableName: 'job_cards',
@@ -2428,8 +2442,9 @@ const updateJobCardServices = async (jobCardId, servicesPayload, user) => {
 
         // 3. Validate "In Progress"
         if (statusObj.statusCode === 'IN_PROGRESS') {
+          const isWaterWash = getServiceDepartment(existingService) === 'water-wash';
           const assignment = jobCard.workAssignments.find(a => a.jobCardServiceId === serviceId);
-          if (!assignment || !assignment.assignedUserId) {
+          if (!isWaterWash && (!assignment || !assignment.assignedUserId)) {
             throw createHttpError(400, `Cannot mark service ${existingService.serviceName} as In Progress without an assigned mechanic`);
           }
         }
@@ -2492,11 +2507,13 @@ const updateJobCardServices = async (jobCardId, servicesPayload, user) => {
 
       // Sync Work Assignments
       const assignment = jobCard.workAssignments.find(a => a.jobCardServiceId === serviceId);
+      const isWaterWashService = getServiceDepartment(existingService) === 'water-wash';
       if (assignment) {
         const assignmentStatuses = await tx.statusMaster.findMany({ where: { module: { is: { moduleCode: 'work-assignment', isActive: true } }, isActive: true } });
         const existingAssignmentStatus = assignmentStatuses.find(s => s.id === assignment.statusId);
-        const isBodyShop = existingAssignmentStatus?.statusCode?.includes('BODY_SHOP') || false;
-        const prefix = isBodyShop ? 'BODY_SHOP_' : 'MECHANICAL_';
+        const isWaterWash = isWaterWashService || existingAssignmentStatus?.statusCode?.includes('WATER_WASH');
+        const isBodyShop = !isWaterWash && (existingAssignmentStatus?.statusCode?.includes('BODY_SHOP') || false);
+        const prefix = isWaterWash ? 'WATER_WASH_' : (isBodyShop ? 'BODY_SHOP_' : 'MECHANICAL_');
         
         let baseStatusCode = statusObj.statusCode;
         const normalizedName = (statusObj.statusName || '').toUpperCase().replace(/\s+/g, '_');
@@ -2504,16 +2521,44 @@ const updateJobCardServices = async (jobCardId, servicesPayload, user) => {
         if (normalizedName === 'COMPLETED' || baseStatusCode === 'COMPLETED') baseStatusCode = 'COMPLETED';
         if (normalizedName === 'ASSIGNED' || baseStatusCode === 'ASSIGNED') baseStatusCode = 'ASSIGNED';
         
-        const matchAssignStatus = assignmentStatuses.find(s => s.statusCode === `${prefix}${baseStatusCode}` || s.statusName.toUpperCase().replace(/\s+/g, '_') === `${prefix}${baseStatusCode}`);
+        const matchAssignStatus = assignmentStatuses.find(s => s.statusCode === `${prefix}${baseStatusCode}` || s.statusName.toUpperCase().replace(/\s+/g, '_') === `${prefix}${baseStatusCode}`)
+          || (isWaterWash ? assignmentStatuses.find(s => s.statusCode === baseStatusCode) : null);
         
         if (matchAssignStatus && assignment.statusId !== matchAssignStatus.id) {
           let updateData = { statusId: matchAssignStatus.id, modifiedById: user?.userId || null };
-          if (statusObj.statusCode === 'COMPLETED') updateData.completedAt = new Date();
-          if (statusObj.statusCode === 'IN_PROGRESS') updateData.startedAt = new Date();
+          if (statusObj.statusCode === 'COMPLETED') {
+            updateData.startedAt = assignment.startedAt || new Date();
+            updateData.completedAt = assignment.completedAt || new Date();
+          }
+          if (statusObj.statusCode === 'IN_PROGRESS') {
+            updateData.startedAt = assignment.startedAt || new Date();
+          }
           
           await tx.workAssignment.update({
             where: { id: assignment.id },
             data: updateData
+          });
+        }
+      } else if (isWaterWashService && (statusObj.statusCode === 'IN_PROGRESS' || statusObj.statusCode === 'COMPLETED')) {
+        const assignmentStatuses = await tx.statusMaster.findMany({ where: { module: { is: { moduleCode: 'work-assignment', isActive: true } }, isActive: true } });
+        const targetCode = statusObj.statusCode === 'COMPLETED' ? 'WATER_WASH_COMPLETED' : 'WATER_WASH_IN_PROGRESS';
+        const matchAssignStatus = assignmentStatuses.find(s => s.statusCode === targetCode)
+          || assignmentStatuses.find(s => s.statusCode === statusObj.statusCode);
+        if (matchAssignStatus) {
+          const now = new Date();
+          await tx.workAssignment.create({
+            data: {
+              locationId: jobCard.locationId || 1,
+              jobCardId: parsedJobCardId,
+              jobCardServiceId: serviceId,
+              statusId: matchAssignStatus.id,
+              assignedUserId: user?.userId || 1,
+              assignedById: user?.userId || null,
+              assignedAt: now,
+              startedAt: now,
+              ...(statusObj.statusCode === 'COMPLETED' ? { completedAt: now } : {}),
+              createdById: user?.userId || null
+            }
           });
         }
       }

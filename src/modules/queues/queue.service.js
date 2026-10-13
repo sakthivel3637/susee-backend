@@ -8,6 +8,13 @@ const {
   skipDepartmentAssignmentPendingStage,
   syncAssignmentPendingStages
 } = require('../processStageTracking/departmentAssignmentStage.service');
+const {
+  DEPARTMENT_ORDER,
+  DEPARTMENT_ALIASES,
+  normalizeText,
+  normalizeDepartment,
+  getServiceDepartment
+} = require('../../common/utils/department.util');
 
 const syncJobCardStageTracking = async (tx, jobCardId, oldStatusId, newStatusId, user) => {
   if (!newStatusId) return;
@@ -38,13 +45,7 @@ const syncJobCardStageTracking = async (tx, jobCardId, oldStatusId, newStatusId,
   }, tx);
 };
 
-const DEPARTMENT_ORDER = ['mechanical', 'body-shop', 'water-wash'];
 
-const DEPARTMENT_ALIASES = {
-  mechanical: ['mechanical', 'mechanic', 'mechnanic', 'floor', 'general service', 'engine', 'electrical'],
-  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'painting', 'denting', 'denting-painting', 'denting-&-painting', 'denting & painting', 'tinkering', 'bodywork', 'collision'],
-  'water-wash': ['water-wash', 'water_wash', 'water wash', 'waterwash', 'washing', 'wash']
-};
 
 const BAY_TYPE_BY_DEPARTMENT = {
   mechanical: 'Mechanical',
@@ -103,41 +104,7 @@ const resolveRequiredStatusId = async (tx, moduleCode, statusCodes, label) => {
   return statusId;
 };
 
-const normalizeText = (value) => String(value || '').trim().toLowerCase().replace(/[_\s]+/g, '-');
 
-const normalizeDepartment = (value) => {
-  if (!value) return null;
-  const normalizedValue = normalizeText(value);
-
-  return DEPARTMENT_ORDER.find((department) => {
-    return DEPARTMENT_ALIASES[department].some((alias) => {
-      const normAlias = normalizeText(alias);
-      return normalizedValue === normAlias || normalizedValue.includes(normAlias) || normAlias.includes(normalizedValue);
-    });
-  });
-};
-
-const getServiceDepartment = (service) => {
-  if (!service) return null;
-
-  const category = service.serviceItem && service.serviceItem.category;
-  if (category) {
-    const dept = normalizeDepartment(category.slug || category.name);
-    if (dept) return dept;
-  }
-
-  if (service.category) {
-    const dept = normalizeDepartment(service.category.slug || service.category.name);
-    if (dept) return dept;
-  }
-
-  if (service.categoryName) {
-    const dept = normalizeDepartment(service.categoryName);
-    if (dept) return dept;
-  }
-
-  return 'mechanical';
-};
 
 const getStatusCode = (status) => String((status && status.statusCode) || '').trim().toUpperCase();
 
@@ -1367,12 +1334,52 @@ const completeWaterWashWork = async (jobCardId, user) => {
       'Water wash service completed'
     );
 
+    const assignmentCompletedStatusId = await resolveRequiredStatusId(
+      tx,
+      STATUS_MODULE_CODES.WORK_ASSIGNMENT,
+      ASSIGNMENT_STATUS_CODES['water-wash'].completed,
+      'Water wash assignment completed'
+    );
+
     const waterWashServiceIds = waterWashServices.map(s => s.id);
 
     await tx.jobCardService.updateMany({
       where: { id: { in: waterWashServiceIds } },
       data: { serviceStatusId: completedServiceStatusId, modifiedById: user?.userId || null }
     });
+
+    const now = new Date();
+    for (const service of waterWashServices) {
+      const assignments = service.workAssignments || [];
+      if (assignments.length > 0) {
+        for (const assignment of assignments) {
+          await tx.workAssignment.update({
+            where: { id: assignment.id },
+            data: {
+              statusId: assignmentCompletedStatusId,
+              startedAt: assignment.startedAt || now,
+              completedAt: assignment.completedAt || now,
+              modifiedById: user?.userId || null
+            }
+          });
+        }
+      } else {
+        await tx.workAssignment.create({
+          data: {
+            locationId: jobCard.locationId || 1,
+            jobCardId: id,
+            jobCardServiceId: service.id,
+            statusId: assignmentCompletedStatusId,
+            assignedUserId: user?.userId || 1,
+            assignedById: user?.userId || null,
+            assignedAt: now,
+            startedAt: now,
+            completedAt: now,
+            createdById: user?.userId || null
+          }
+        });
+      }
+    }
 
     const refreshedJobCard = await tx.jobCard.findUnique({
       where: { id },
@@ -1442,12 +1449,50 @@ const startWaterWashWork = async (jobCardId, user) => {
       'Water wash service in progress'
     );
 
+    const assignmentInProgressStatusId = await resolveRequiredStatusId(
+      tx,
+      STATUS_MODULE_CODES.WORK_ASSIGNMENT,
+      ASSIGNMENT_STATUS_CODES['water-wash'].inProgress,
+      'Water wash assignment in progress'
+    );
+
     const waterWashServiceIds = waterWashServices.map(s => s.id);
 
     await tx.jobCardService.updateMany({
       where: { id: { in: waterWashServiceIds } },
       data: { serviceStatusId: inProgressStatusId, modifiedById: user?.userId || null }
     });
+
+    const now = new Date();
+    for (const service of waterWashServices) {
+      const assignments = service.workAssignments || [];
+      if (assignments.length > 0) {
+        for (const assignment of assignments) {
+          await tx.workAssignment.update({
+            where: { id: assignment.id },
+            data: {
+              statusId: assignmentInProgressStatusId,
+              startedAt: assignment.startedAt || now,
+              modifiedById: user?.userId || null
+            }
+          });
+        }
+      } else {
+        await tx.workAssignment.create({
+          data: {
+            locationId: jobCard.locationId || 1,
+            jobCardId: id,
+            jobCardServiceId: service.id,
+            statusId: assignmentInProgressStatusId,
+            assignedUserId: user?.userId || 1,
+            assignedById: user?.userId || null,
+            assignedAt: now,
+            startedAt: now,
+            createdById: user?.userId || null
+          }
+        });
+      }
+    }
 
     await completeDepartmentAssignmentPendingStage(tx, {
       jobCard,

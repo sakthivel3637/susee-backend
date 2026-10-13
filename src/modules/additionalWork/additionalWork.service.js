@@ -4,15 +4,13 @@ const { STATUS_MODULE_CODES, resolveStatusFromCodes, resolveStatusIdFromCodes } 
 const { validateTwilioRequest, sendAdditionalWorkApproval } = require('../../providers/whatsapp/whatsapp.service');
 const { createStorageProvider } = require('../../providers/storage/storage.provider');
 const { refreshJobCardStatus } = require('../jobCards/jobCard.service');
+const {
+  DEPARTMENT_ORDER,
+  DEPARTMENT_ALIASES,
+  normalizeDepartment
+} = require('../../common/utils/department.util');
 
 const storageProvider = createStorageProvider();
-
-const DEPARTMENT_ORDER = ['mechanical', 'body-shop', 'water-wash'];
-const DEPARTMENT_ALIASES = {
-  mechanical: ['mechanical', 'mechanic', 'mechnanic', 'floor'],
-  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'denting'],
-  'water-wash': ['water-wash', 'water_wash', 'water wash', 'waterwash', 'washing', 'wash']
-};
 const ROLE_ALIASES = {
   body_shop: 'floor_supervisor',
   bodyshop: 'floor_supervisor',
@@ -170,20 +168,7 @@ const normalizeRoleSlug = (roleSlug) => {
   return ROLE_ALIASES[normalized] || normalized;
 };
 
-const normalizeDepartment = (value) => {
-  if (!value) return null;
-  const normalizedValue = normalizeText(value);
-  if (!normalizedValue) return null;
 
-  const found = DEPARTMENT_ORDER.find((department) => {
-    return (DEPARTMENT_ALIASES[department] || []).some((alias) => {
-      const normAlias = normalizeText(alias);
-      return normalizedValue === normAlias || normalizedValue.includes(normAlias) || normAlias.includes(normalizedValue);
-    });
-  });
-
-  return found || 'mechanical';
-};
 
 const getAllowedDepartments = (user) => {
   if (!user) return ['all'];

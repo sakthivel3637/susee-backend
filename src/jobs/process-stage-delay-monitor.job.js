@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const prisma = require('../config/db');
 const { findStageTimeLimit } = require('../modules/processStageTracking/processStageTracking.service');
+const { getNextAssignmentPendingDepartment, syncAssignmentPendingStages } = require('../modules/processStageTracking/departmentAssignmentStage.service');
 const { getSocket } = require('../config/socket');
 
 let isRegistered = false;
@@ -100,6 +101,70 @@ async function runProcessStageDelayMonitorWorkflow() {
     scannedCount = activeStages.length;
 
     for (const stage of activeStages) {
+      if (stage.jobCardId && stage.status?.statusCode && stage.status.statusCode.endsWith('_ASSIGNMENT_PENDING')) {
+        try {
+          const fullJobCard = await prisma.jobCard.findUnique({
+            where: { id: stage.jobCardId },
+            select: {
+              id: true,
+              locationId: true,
+              gateEntryId: true,
+              customerId: true,
+              vehicleId: true,
+              currentStatusId: true,
+              currentStatus: { select: { statusCode: true } },
+              approvalStatus: { select: { statusCode: true } },
+              services: {
+                select: {
+                  id: true,
+                  serviceName: true,
+                  serviceItemId: true,
+                  isAdditional: true,
+                  serviceStatus: { select: { statusCode: true } },
+                  approvalStatus: { select: { statusCode: true } },
+                  workAssignments: {
+                    select: {
+                      id: true,
+                      completedAt: true,
+                      status: { select: { statusCode: true } }
+                    }
+                  },
+                  serviceItem: {
+                    select: {
+                      id: true,
+                      name: true,
+                      slug: true,
+                      category: { select: { id: true, name: true, slug: true } }
+                    }
+                  }
+                }
+              }
+            }
+          });
+
+          if (fullJobCard) {
+            const nextDept = getNextAssignmentPendingDepartment(fullJobCard);
+            const expectedStatusCode = nextDept === 'mechanical'
+              ? 'MECHANICAL_ASSIGNMENT_PENDING'
+              : nextDept === 'body-shop'
+                ? 'BODY_SHOP_ASSIGNMENT_PENDING'
+                : nextDept === 'water-wash'
+                  ? 'WATER_WASH_ASSIGNMENT_PENDING'
+                  : null;
+
+            if (expectedStatusCode && expectedStatusCode !== stage.status.statusCode) {
+              console.info(`[Delay Monitor Self-Healing] Auto-syncing assignment pending stage for Job Card #${stage.jobCardId} (${stage.status.statusCode} -> ${expectedStatusCode})`);
+              await prisma.$transaction(async (tx) => {
+                await syncAssignmentPendingStages(tx, { jobCard: fullJobCard });
+              });
+              continue;
+            }
+          }
+        } catch (healErr) {
+          console.warn(`[Delay Monitor Self-Healing] Error checking stage #${stage.id}:`, healErr.message);
+        }
+      }
+
       const limit = await findStageTimeLimit(prisma, {
         locationId: stage.locationId,
         moduleId: stage.moduleId,
@@ -184,6 +249,8 @@ async function runProcessStageDelayMonitorWorkflow() {
                 type: 'DELAY_ALERT',
                 jobCardId: stage.jobCardId,
                 jobCardSlug: stage.jobCard?.slug || null,
+                jobCardNo: stage.jobCard?.jobCardNo || null,
+                vehicleReg: stage.vehicle?.registrationNo || null,
                 processStageTrackingId: stage.id,
                 statusCode: stage.status?.statusCode
               });
@@ -199,6 +266,8 @@ async function runProcessStageDelayMonitorWorkflow() {
                 type: 'DELAY_ALERT',
                 jobCardId: stage.jobCardId,
                 jobCardSlug: stage.jobCard?.slug || null,
+                jobCardNo: stage.jobCard?.jobCardNo || null,
+                vehicleReg: stage.vehicle?.registrationNo || null,
                 processStageTrackingId: stage.id,
                 statusCode: stage.status?.statusCode
               });

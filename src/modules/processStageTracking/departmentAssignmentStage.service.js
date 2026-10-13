@@ -1,13 +1,12 @@
 const { STATUS_MODULE_CODES, resolveStatusFromCodes } = require('../../common/utils/status.util');
+const {
+  DEPARTMENT_ORDER,
+  DEPARTMENT_ALIASES,
+  normalizeText,
+  normalizeDepartment,
+  getServiceDepartment
+} = require('../../common/utils/department.util');
 const { startStage, completeStage, cancelStage, skipStage } = require('./processStageTracking.service');
-
-const DEPARTMENT_ORDER = ['mechanical', 'body-shop', 'water-wash'];
-
-const DEPARTMENT_ALIASES = {
-  mechanical: ['mechanical', 'mechanic', 'mechnanic', 'floor', 'general service', 'engine', 'electrical'],
-  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'painting', 'denting', 'denting-painting', 'denting-&-painting', 'denting & painting', 'tinkering', 'bodywork', 'collision'],
-  'water-wash': ['water-wash', 'water_wash', 'water wash', 'waterwash', 'washing', 'wash']
-};
 
 const ASSIGNMENT_PENDING_STATUS_CODES = {
   mechanical: 'MECHANICAL_ASSIGNMENT_PENDING',
@@ -16,42 +15,6 @@ const ASSIGNMENT_PENDING_STATUS_CODES = {
 };
 const FINAL_JOB_CARD_STATUS_CODES = ['DELIVERED', 'REJECTED'];
 const REJECTED_APPROVAL_STATUS_CODES = ['REJECTED'];
-
-const normalizeText = (value) => String(value || '').trim().toLowerCase().replace(/[_\s]+/g, '-');
-
-const normalizeDepartment = (value) => {
-  if (!value) return null;
-  const normalizedValue = normalizeText(value);
-
-  return DEPARTMENT_ORDER.find((department) => {
-    return DEPARTMENT_ALIASES[department].some((alias) => {
-      const normAlias = normalizeText(alias);
-      return normalizedValue === normAlias || normalizedValue.includes(normAlias) || normAlias.includes(normalizedValue);
-    });
-  });
-};
-
-const getServiceDepartment = (service) => {
-  if (!service) return null;
-
-  const category = service.serviceItem && service.serviceItem.category;
-  if (category) {
-    const dept = normalizeDepartment(category.slug || category.name);
-    if (dept) return dept;
-  }
-
-  if (service.category) {
-    const dept = normalizeDepartment(service.category.slug || service.category.name);
-    if (dept) return dept;
-  }
-
-  if (service.categoryName) {
-    const dept = normalizeDepartment(service.categoryName);
-    if (dept) return dept;
-  }
-
-  return 'mechanical';
-};
 
 const getStatusCode = (status) => String((status && status.statusCode) || '').trim().toUpperCase();
 
@@ -301,7 +264,7 @@ const startDepartmentAssignmentPendingStage = async (tx, { jobCard, department, 
     }
   }
 
-  if (jobCard.currentStatusId !== status.id) {
+  if (!jobCard.currentStatusId || jobCard.currentStatusId !== status.id) {
     if (jobCard.id) {
       await completeStage({
         jobCardId: jobCard.id,

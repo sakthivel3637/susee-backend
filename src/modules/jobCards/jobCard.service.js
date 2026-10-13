@@ -3,6 +3,12 @@ const { getSocket } = require('../../config/socket');
 const { STATUS_MODULE_CODES, statusModuleFilter, resolveStatusById, resolveStatusFromCodes, resolveStatusIdFromCodes, resolveOrEnsureStatus } = require('../../common/utils/status.util');
 const { normalizeVehicleNumber } = require('../../utils/normalizeVehicleNumber');
 const { createAuditLog } = require('../../common/utils/audit.util');
+const {
+  DEPARTMENT_ORDER,
+  DEPARTMENT_ALIASES,
+  normalizeDepartment,
+  getServiceDepartment
+} = require('../../common/utils/department.util');
 const { syncAssignmentPendingStages, skipDepartmentAssignmentPendingStage } = require('../processStageTracking/departmentAssignmentStage.service');
 const { startStage, completeStage } = require('../processStageTracking/processStageTracking.service');
 const { createStorageProvider } = require('../../providers/storage/storage.provider');
@@ -59,12 +65,6 @@ const JOB_CARD_APPROVED_STATUS_CODES = ['APPROVED'];
 const JOB_CARD_REJECTED_STATUS_CODES = ['REJECTED'];
 const APPROVAL_APPROVED_STATUS_CODES = ['APPROVED'];
 const APPROVAL_REJECTED_STATUS_CODES = ['REJECTED'];
-const DEPARTMENT_ORDER = ['mechanical', 'body-shop', 'water-wash'];
-const DEPARTMENT_ALIASES = {
-  mechanical: ['mechanical', 'mechanic', 'mechnanic', 'floor', 'general service', 'engine', 'electrical'],
-  'body-shop': ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'painting', 'denting', 'denting-painting', 'denting-&-painting', 'denting & painting', 'tinkering', 'bodywork', 'collision'],
-  'water-wash': ['water-wash', 'water_wash', 'water wash', 'waterwash', 'washing', 'wash']
-};
 const ASSIGNMENT_STATUS_CODES = {
   mechanical: {
     assigned: ['MECHANICAL_ASSIGNED'],
@@ -75,6 +75,11 @@ const ASSIGNMENT_STATUS_CODES = {
     assigned: ['BODY_SHOP_ASSIGNED'],
     inProgress: ['BODY_SHOP_IN_PROGRESS'],
     completed: ['BODY_SHOP_COMPLETED']
+  },
+  'water-wash': {
+    assigned: ['WATER_WASH_ASSIGNED', 'IN_PROGRESS', 'COMPLETED'],
+    inProgress: ['WATER_WASH_IN_PROGRESS', 'IN_PROGRESS'],
+    completed: ['WATER_WASH_COMPLETED', 'COMPLETED']
   }
 };
 const ASSIGNMENT_PENDING_STATUS_CODES = {
@@ -257,18 +262,6 @@ const resolveServiceSelections = async (tx, payloadServices) => {
   });
 };
 
-const normalizeDepartment = (value) => {
-  if (!value) return null;
-  const normalizedValue = normalizeText(value);
-
-  return DEPARTMENT_ORDER.find((department) => {
-    return DEPARTMENT_ALIASES[department].some((alias) => {
-      const normAlias = normalizeText(alias);
-      return normalizedValue === normAlias || normalizedValue.includes(normAlias) || normAlias.includes(normalizedValue);
-    });
-  });
-};
-
 const ROLE_ALIASES = {
   body_shop: 'floor_supervisor',
   bodyshop: 'floor_supervisor',
@@ -341,20 +334,6 @@ const getAllowedDepartments = (user) => {
 
   if (isPrivileged) return ['all'];
   return Array.from(allowed);
-};
-
-const getServiceDepartment = (service) => {
-  if (!service) return null;
-  const category = service.serviceItem ? service.serviceItem.category : (service.category || null);
-  if (category) {
-    const dept = normalizeDepartment(category.slug || category.name);
-    if (dept) return dept;
-  }
-  if (service.categoryName) {
-    const dept = normalizeDepartment(service.categoryName);
-    if (dept) return dept;
-  }
-  return 'mechanical';
 };
 
 const getQueryDepartment = (query, user) => {
@@ -529,7 +508,70 @@ const resolveRequiredStatus = async (tx, moduleCode, statusCodes, label) => {
 const syncAssignmentsForServiceStatus = async (tx, service, serviceStatus, user) => {
   const department = getServiceDepartment(service);
   if (department === 'water-wash') {
-    // Water wash has no mechanic/bay assignments; skip workAssignment synchronization
+    const serviceStatusCode = getStatusCode(serviceStatus);
+    const shouldStart = isInProgressStatusCode(serviceStatusCode);
+    const shouldComplete = isCompletedStatusCode(serviceStatusCode);
+
+    if (!shouldStart && !shouldComplete) {
+      return;
+    }
+
+    const assignmentStatus = await resolveRequiredStatus(
+      tx,
+      STATUS_MODULE_CODES.WORK_ASSIGNMENT,
+      shouldComplete ? ASSIGNMENT_STATUS_CODES['water-wash'].completed : ASSIGNMENT_STATUS_CODES['water-wash'].inProgress,
+      `Water wash assignment ${shouldComplete ? 'completed' : 'in progress'}`
+    );
+    const now = new Date();
+    const assignments = service.workAssignments || [];
+
+    if (assignments.length > 0) {
+      for (const assignment of assignments) {
+        await tx.workAssignment.update({
+          where: { id: assignment.id },
+          data: {
+            statusId: assignmentStatus.id,
+            startedAt: assignment.startedAt || now,
+            ...(shouldComplete ? { completedAt: assignment.completedAt || now } : {}),
+            modifiedById: user && user.userId ? user.userId : null
+          }
+        });
+
+        assignment.statusId = assignmentStatus.id;
+        assignment.status = assignmentStatus;
+        assignment.startedAt = assignment.startedAt || now;
+        if (shouldComplete) {
+          assignment.completedAt = assignment.completedAt || now;
+        }
+      }
+    } else {
+      let locationId = service.locationId || service.jobCard?.locationId || (user && user.locationId ? Number(user.locationId) : null);
+      if (!locationId && service.jobCardId) {
+        const jc = await tx.jobCard.findUnique({ where: { id: service.jobCardId }, select: { locationId: true } });
+        locationId = jc?.locationId || 1;
+      }
+      const newAssignment = await tx.workAssignment.create({
+        data: {
+          locationId: locationId || 1,
+          jobCardId: service.jobCardId,
+          jobCardServiceId: service.id,
+          statusId: assignmentStatus.id,
+          assignedUserId: user && user.userId ? user.userId : 1,
+          assignedById: user && user.userId ? user.userId : null,
+          assignedAt: now,
+          startedAt: now,
+          ...(shouldComplete ? { completedAt: now } : {}),
+          createdById: user && user.userId ? user.userId : null
+        },
+        include: {
+          assignedUser: { select: { id: true, fullName: true, employeeCode: true, mobileNo: true } },
+          status: true
+        }
+      });
+      if (Array.isArray(service.workAssignments)) {
+        service.workAssignments.push(newAssignment);
+      }
+    }
     return;
   }
   const serviceStatusCode = getStatusCode(serviceStatus);
@@ -759,45 +801,50 @@ const toBaySummary = (bay) => bay
   }
   : null;
 
-const toAssignmentSummary = (assignment, bayMap = new Map()) => ({
-  id: assignment.id,
-  jobCardId: assignment.jobCardId,
-  jobCardServiceId: assignment.jobCardServiceId,
-  assignedUserId: assignment.assignedUserId,
-  bayId: assignment.bayId || null,
-  bay: assignment.bayId ? toBaySummary(bayMap.get(assignment.bayId)) : null,
-  assignedAt: assignment.assignedAt,
-  startedAt: assignment.startedAt,
-  completedAt: assignment.completedAt,
-  status: assignment.status
-    ? {
-      id: assignment.status.id,
-      statusCode: assignment.status.statusCode,
-      statusName: assignment.status.statusName
-    }
-    : null,
-  assignedUser: assignment.assignedUser
-    ? {
-      id: assignment.assignedUser.id,
-      fullName: assignment.assignedUser.fullName,
-      employeeCode: assignment.assignedUser.employeeCode,
-      mobileNo: assignment.assignedUser.mobileNo
-    }
-    : null,
-  service: assignment.jobCardService
-    ? {
-      id: assignment.jobCardService.id,
-      serviceName: assignment.jobCardService.serviceName,
-      category: assignment.jobCardService.serviceItem && assignment.jobCardService.serviceItem.category
+const toAssignmentSummary = (assignment, bayMap = new Map()) => {
+  const isWaterWash = getServiceDepartment(assignment.jobCardService || assignment.service) === 'water-wash';
+  return {
+    id: assignment.id,
+    jobCardId: assignment.jobCardId,
+    jobCardServiceId: assignment.jobCardServiceId,
+    assignedUserId: isWaterWash ? null : assignment.assignedUserId,
+    bayId: isWaterWash ? null : (assignment.bayId || null),
+    bay: isWaterWash ? null : (assignment.bayId ? toBaySummary(bayMap.get(assignment.bayId)) : null),
+    assignedAt: assignment.assignedAt,
+    startedAt: assignment.startedAt,
+    completedAt: assignment.completedAt,
+    status: assignment.status
+      ? {
+        id: assignment.status.id,
+        statusCode: assignment.status.statusCode,
+        statusName: assignment.status.statusName
+      }
+      : null,
+    assignedUser: isWaterWash
+      ? null
+      : (assignment.assignedUser
         ? {
-          id: assignment.jobCardService.serviceItem.category.id,
-          name: assignment.jobCardService.serviceItem.category.name,
-          slug: assignment.jobCardService.serviceItem.category.slug
+          id: assignment.assignedUser.id,
+          fullName: assignment.assignedUser.fullName,
+          employeeCode: assignment.assignedUser.employeeCode,
+          mobileNo: assignment.assignedUser.mobileNo
         }
-        : null
-    }
-    : null
-});
+        : null),
+    service: assignment.jobCardService
+      ? {
+        id: assignment.jobCardService.id,
+        serviceName: assignment.jobCardService.serviceName,
+        category: assignment.jobCardService.serviceItem && assignment.jobCardService.serviceItem.category
+          ? {
+            id: assignment.jobCardService.serviceItem.category.id,
+            name: assignment.jobCardService.serviceItem.category.name,
+            slug: assignment.jobCardService.serviceItem.category.slug
+          }
+          : null
+      }
+      : null
+  };
+};
 
 const computeWorkType = (jobCard) => {
   const services = jobCard.services || [];
@@ -1316,7 +1363,8 @@ const attachBaysToJobCard = async (jobCard) => {
     bay: assignment.bayId ? (bayMap.get(assignment.bayId) || null) : null
   }));
 
-  const activeAssignment = updatedAssignments.find(a => !a.completedAt) || updatedAssignments[0];
+  const nonWaterWashAssignments = updatedAssignments.filter(a => getServiceDepartment(a.jobCardService || a.service) !== 'water-wash');
+  const activeAssignment = nonWaterWashAssignments.find(a => !a.completedAt) || nonWaterWashAssignments[0] || updatedAssignments[0];
   const assignedBay = activeAssignment?.bay || null;
 
   return {
@@ -1351,6 +1399,22 @@ const getJobCardById = async (id, user) => {
 
   // Attach bay data manually (bay has no Prisma relation on WorkAssignment)
   jobCard = await attachBaysToJobCard(jobCard);
+
+  if (Array.isArray(jobCard.workAssignments)) {
+    jobCard.workAssignments = jobCard.workAssignments.map((assignment) => {
+      const isWaterWash = getServiceDepartment(assignment.jobCardService || assignment.service) === 'water-wash';
+      if (isWaterWash) {
+        return {
+          ...assignment,
+          assignedUser: null,
+          assignedUserId: null,
+          bay: null,
+          bayId: null
+        };
+      }
+      return assignment;
+    });
+  }
 
   try {
     const approvals = await prisma.$queryRaw`
@@ -1818,12 +1882,14 @@ const updateJobCard = async (id, payload, user) => {
         `${customerApprovalDecision.toLowerCase()} approval`
       );
 
-      approvalJobCardStatus = await resolveRequiredStatus(
-        tx,
-        STATUS_MODULE_CODES.JOB_CARD_STATUS,
-        isApproved ? JOB_CARD_APPROVED_STATUS_CODES : JOB_CARD_REJECTED_STATUS_CODES,
-        `${customerApprovalDecision.toLowerCase()} job card`
-      );
+      approvalJobCardStatus = isApproved && nextStatus
+        ? nextStatus
+        : await resolveRequiredStatus(
+          tx,
+          STATUS_MODULE_CODES.JOB_CARD_STATUS,
+          isApproved ? JOB_CARD_APPROVED_STATUS_CODES : JOB_CARD_REJECTED_STATUS_CODES,
+          `${customerApprovalDecision.toLowerCase()} job card`
+        );
 
       const rejectedServiceStatus = isApproved
         ? null
@@ -2280,14 +2346,7 @@ const skipJobCardDepartment = async (jobCardId, departmentSlug, reason, user) =>
     }
 
     // 2. Normalize target department
-    let targetDepartment = null;
-    const normalizedValue = normalizeText(departmentSlug);
-    for (const dept of DEPARTMENT_ORDER) {
-      if (DEPARTMENT_ALIASES[dept].some((alias) => normalizeText(alias) === normalizedValue)) {
-        targetDepartment = dept;
-        break;
-      }
-    }
+    const targetDepartment = normalizeDepartment(departmentSlug);
 
     if (!targetDepartment) {
       throw createHttpError(400, 'Invalid department provided');
@@ -2417,11 +2476,21 @@ const skipJobCardDepartment = async (jobCardId, departmentSlug, reason, user) =>
         modifiedById: user?.userId || null
       });
 
+      const previousStatusId = updatedJobCard.currentStatusId;
       const newJobCardStatus = await deriveJobCardStatus(tx, updatedJobCard);
-      if (newJobCardStatus && newJobCardStatus.id !== updatedJobCard.currentStatusId) {
+      if (newJobCardStatus && newJobCardStatus.id !== previousStatusId) {
+        await syncJobCardStageTracking(tx, parsedJobCardId, previousStatusId, newJobCardStatus, user);
         await tx.jobCard.update({
           where: { id: parsedJobCardId },
-          data: { currentStatusId: newJobCardStatus.id }
+          data: { currentStatusId: newJobCardStatus.id, modifiedById: user?.userId || null }
+        });
+        await tx.jobCardStatusLog.create({
+          data: {
+            jobCardId: parsedJobCardId,
+            statusId: newJobCardStatus.id,
+            changedById: user?.userId || null,
+            remarks: `Department ${targetDepartment} skipped. Status updated to ${newJobCardStatus.statusName}`
+          }
         });
         updatedJobCard.currentStatusId = newJobCardStatus.id;
         updatedJobCard.currentStatus = newJobCardStatus;
