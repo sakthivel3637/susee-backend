@@ -31,9 +31,8 @@ const markNotificationFailure = async (notificationId, reason, retryCount) => {
   });
 };
 
-/**
- * Main workflow to send pending notifications via FCM.
- */
+//* Main workflow to send pending notifications via FCM.
+
 async function runFcmSenderWorkflow() {
   console.info('[CRON START] FCM Push Notification Sender Job');
   const startTime = Date.now();
@@ -235,9 +234,7 @@ async function runFcmSenderWorkflow() {
   }
 }
 
-/**
- * Initialize and register the cron job safely.
- */
+// Initialize and register the cron job safely.
 function startFcmSenderJob() {
   if (isRegistered) {
     console.info('[FCM Sender Job] Cron job already registered. Skipping registration.');

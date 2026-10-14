@@ -465,14 +465,27 @@ const arePreviousDepartmentsCompleted = (jobCard, department) => {
   });
 };
 
-const validateServiceStatusUpdateAccess = (jobCard, service, user) => {
+const validateServiceStatusUpdateAccess = (jobCard, service, user, targetStatusCode) => {
   const allowedDepartments = getAllowedDepartments(user);
 
   if (allowedDepartments.length === 0) {
     throw createHttpError(403, 'You are not allowed to update service status');
   }
 
+  const isRejectionOrCancellation =
+    targetStatusCode === 'REJECTED' ||
+    targetStatusCode === 'CANCELLED' ||
+    String(targetStatusCode || '').endsWith('_REJECTED') ||
+    String(targetStatusCode || '').endsWith('_CANCELLED');
+
   if (allowedDepartments.includes('all')) {
+    if (isJobCardServiceCompleted(service)) {
+      throw createHttpError(400, 'Completed service status cannot be changed');
+    }
+    // Without customer approval, supervisor is only allowed to reject/cancel the additional service
+    if (!isRejectionOrCancellation && !isApprovedForWork(service)) {
+      throw createHttpError(400, 'Additional work must be customer approved before it can be started');
+    }
     return;
   }
 
@@ -486,7 +499,13 @@ const validateServiceStatusUpdateAccess = (jobCard, service, user) => {
     throw createHttpError(400, 'Previous service stage must be completed before updating this service status');
   }
 
+  /* Original check:
   if (!isApprovedForWork(service)) {
+    throw createHttpError(400, 'Additional work must be customer approved before it can be started');
+  }
+  */
+  // Without customer approval, supervisor is only allowed to reject/cancel the additional service
+  if (!isRejectionOrCancellation && !isApprovedForWork(service)) {
     throw createHttpError(400, 'Additional work must be customer approved before it can be started');
   }
 
@@ -1787,12 +1806,30 @@ const updateJobCard = async (id, payload, user) => {
           throw createHttpError(400, 'One or more selected services are invalid for this job card');
         }
 
-        validateServiceStatusUpdateAccess(existingJobCard, existingService, user);
-
         const serviceStatus = await resolveStatusById(tx, STATUS_MODULE_CODES.JOB_CARD_SERVICE, item.statusId);
 
         if (!serviceStatus) {
           throw createHttpError(400, 'Invalid job card service status');
+        }
+
+        const targetStatusCode = getStatusCode(serviceStatus);
+
+        /* Original check without targetStatusCode:
+        validateServiceStatusUpdateAccess(existingJobCard, existingService, user);
+        */
+        validateServiceStatusUpdateAccess(existingJobCard, existingService, user, targetStatusCode);
+
+        const isRejection = targetStatusCode === 'REJECTED' || targetStatusCode === 'CANCELLED';
+
+        let rejectedApprovalStatusId = null;
+        if (existingService.isAdditional && isRejection) {
+          const rejectedApprovalStatus = await resolveRequiredStatus(
+            tx,
+            STATUS_MODULE_CODES.APPROVAL_STATUS,
+            ['REJECTED'],
+            'Rejected approval'
+          );
+          rejectedApprovalStatusId = rejectedApprovalStatus.id;
         }
 
         await syncAssignmentsForServiceStatus(tx, existingService, serviceStatus, user);
@@ -1801,12 +1838,30 @@ const updateJobCard = async (id, payload, user) => {
           where: { id: item.jobCardServiceId },
           data: {
             serviceStatusId: serviceStatus.id,
+            ...(rejectedApprovalStatusId ? { approvalStatusId: rejectedApprovalStatusId } : {}),
             modifiedById: user && user.userId ? user.userId : null
           }
         });
 
         existingService.serviceStatusId = serviceStatus.id;
         existingService.serviceStatus = serviceStatus;
+
+        if (rejectedApprovalStatusId) {
+          existingService.approvalStatusId = rejectedApprovalStatusId;
+          existingService.approvalStatus = { statusCode: 'REJECTED', statusName: 'Rejected' };
+
+          if (existingService.approvalId) {
+            await tx.jobCardApproval.update({
+              where: { id: existingService.approvalId },
+              data: {
+                statusId: rejectedApprovalStatusId,
+                customerResponse: 'Rejected by supervisor (Customer unreachable / No response)',
+                respondedAt: new Date(),
+                modifiedById: user && user.userId ? user.userId : null
+              }
+            });
+          }
+        }
       }
 
       // Auto-resume postponed services in other repair department if a department reached completion
