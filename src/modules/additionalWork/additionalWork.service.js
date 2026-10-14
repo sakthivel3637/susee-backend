@@ -4,11 +4,7 @@ const { STATUS_MODULE_CODES, resolveStatusFromCodes, resolveStatusIdFromCodes } 
 const { validateTwilioRequest, sendAdditionalWorkApproval } = require('../../providers/whatsapp/whatsapp.service');
 const { createStorageProvider } = require('../../providers/storage/storage.provider');
 const { refreshJobCardStatus } = require('../jobCards/jobCard.service');
-const {
-  DEPARTMENT_ORDER,
-  DEPARTMENT_ALIASES,
-  normalizeDepartment
-} = require('../../common/utils/department.util');
+const { DEPARTMENT_ORDER, DEPARTMENT_ALIASES, normalizeDepartment } = require('../../common/utils/department.util');
 
 const storageProvider = createStorageProvider();
 const ROLE_ALIASES = {

@@ -3,12 +3,7 @@ const { getSocket } = require('../../config/socket');
 const { STATUS_MODULE_CODES, statusModuleFilter, resolveStatusById, resolveStatusFromCodes, resolveStatusIdFromCodes, resolveOrEnsureStatus } = require('../../common/utils/status.util');
 const { normalizeVehicleNumber } = require('../../utils/normalizeVehicleNumber');
 const { createAuditLog } = require('../../common/utils/audit.util');
-const {
-  DEPARTMENT_ORDER,
-  DEPARTMENT_ALIASES,
-  normalizeDepartment,
-  getServiceDepartment
-} = require('../../common/utils/department.util');
+const { DEPARTMENT_ORDER, DEPARTMENT_ALIASES, normalizeDepartment, getServiceDepartment } = require('../../common/utils/department.util');
 const { syncAssignmentPendingStages, skipDepartmentAssignmentPendingStage } = require('../processStageTracking/departmentAssignmentStage.service');
 const { startStage, completeStage } = require('../processStageTracking/processStageTracking.service');
 const { createStorageProvider } = require('../../providers/storage/storage.provider');
@@ -976,11 +971,11 @@ const listJobCards = async (query, user) => {
   const skip = (page - 1) * limit;
   const department = getQueryDepartment(query, user);
 
-  const where = {};
+  const baseWhere = {};
 
   const locationId = user?.locationId || query.locationId;
   if (locationId) {
-    where.locationId = Number(locationId);
+    baseWhere.locationId = Number(locationId);
   }
 
   let matchingBayIds = [];
@@ -998,7 +993,7 @@ const listJobCards = async (query, user) => {
   }
 
   if (query.search) {
-    where.OR = [
+    baseWhere.OR = [
       { jobCardNo: { contains: query.search } },
       { vehicle: { registrationNo: { contains: query.search } } },
       { customer: { fullName: { contains: query.search } } },
@@ -1006,7 +1001,7 @@ const listJobCards = async (query, user) => {
     ];
 
     if (matchingBayIds.length > 0) {
-      where.OR.push({
+      baseWhere.OR.push({
         workAssignments: {
           some: {
             bayId: { in: matchingBayIds }
@@ -1015,6 +1010,36 @@ const listJobCards = async (query, user) => {
       });
     }
   }
+
+  if (query.fromDate || query.toDate) {
+    baseWhere.createdAt = {};
+    if (query.fromDate) {
+      baseWhere.createdAt.gte = new Date(query.fromDate);
+    }
+    if (query.toDate) {
+      const to = new Date(query.toDate);
+      to.setUTCHours(23, 59, 59, 999);
+      baseWhere.createdAt.lte = to;
+    }
+  }
+
+  const isWaterWashOnlyDepartment = Array.isArray(department)
+    ? (department.length === 1 && department[0] === 'water-wash')
+    : (department === 'water-wash');
+
+  if (department && department.length > 0 && !isWaterWashOnlyDepartment) {
+    baseWhere.services = {
+      some: {
+        serviceItem: {
+          category: {
+            slug: { in: department }
+          }
+        }
+      }
+    };
+  }
+
+  const where = { ...baseWhere };
 
   if (query.status) {
     const statusCodes = String(query.status).split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
@@ -1069,22 +1094,6 @@ const listJobCards = async (query, user) => {
     }
   }
 
-  if (query.fromDate || query.toDate) {
-    where.createdAt = {};
-    if (query.fromDate) {
-      where.createdAt.gte = new Date(query.fromDate);
-    }
-    if (query.toDate) {
-      const to = new Date(query.toDate);
-      to.setUTCHours(23, 59, 59, 999);
-      where.createdAt.lte = to;
-    }
-  }
-
-  const isWaterWashOnlyDepartment = Array.isArray(department)
-    ? (department.length === 1 && department[0] === 'water-wash')
-    : (department === 'water-wash');
-
   if (query.tab === 'waterwash' || isWaterWashOnlyDepartment) {
     where.services = {
       some: {
@@ -1100,16 +1109,107 @@ const listJobCards = async (query, user) => {
         statusCode: { in: ['WATER_WASH_IN_PROGRESS', 'WATER_WASH_ASSIGNED'] }
       };
     }
-  } else if (department && department.length > 0) {
-    where.services = {
-      some: {
-        serviceItem: {
-          category: {
-            slug: { in: department }
+  }
+
+  let tabCounts = null;
+  let allCountPromise = null;
+  let mechanicCountPromise = null;
+  let bodyshopCountPromise = null;
+  let waterwashCountPromise = null;
+  let deliveryCountPromise = null;
+
+  if (!isExport) {
+    const tabStatusMasters = await prisma.statusMaster.findMany({
+      where: {
+        statusCode: {
+          in: [
+            'MECHANICAL_ASSIGNED', 'MECHANICAL_IN_PROGRESS',
+            'BODY_SHOP_ASSIGNED', 'BODY_SHOP_IN_PROGRESS',
+            'WATER_WASH_IN_PROGRESS', 'WATER_WASH_ASSIGNED',
+            'READY_FOR_DELIVERY', 'READY_FOR_DELIVERED'
+          ]
+        },
+        isActive: true,
+        module: {
+          moduleCode: STATUS_MODULE_CODES.JOB_CARD_STATUS,
+          isActive: true
+        }
+      },
+      select: { id: true, statusCode: true }
+    });
+
+    const getStatusIds = (codes) => {
+      const ids = tabStatusMasters
+        .filter((s) => codes.includes(s.statusCode))
+        .map((s) => s.id);
+      return ids.length > 0 ? { in: ids } : -1;
+    };
+
+    const mechanicStatusIds = getStatusIds(['MECHANICAL_ASSIGNED', 'MECHANICAL_IN_PROGRESS']);
+    const bodyshopStatusIds = getStatusIds(['BODY_SHOP_ASSIGNED', 'BODY_SHOP_IN_PROGRESS']);
+    const waterwashStatusIds = getStatusIds(['WATER_WASH_IN_PROGRESS', 'WATER_WASH_ASSIGNED']);
+    const deliveryStatusIds = getStatusIds(['READY_FOR_DELIVERY', 'READY_FOR_DELIVERED']);
+
+    const whereMechanic = {
+      ...baseWhere,
+      currentStatusId: mechanicStatusIds,
+      workAssignments: {
+        some: {
+          jobCardService: {
+            serviceItem: {
+              category: {
+                slug: { in: ['mechanical', 'mechanic', 'mechnanic', 'floor', 'general-service', 'general service', 'engine', 'electrical'] }
+              }
+            }
           }
         }
       }
     };
+
+    const whereBodyshop = {
+      ...baseWhere,
+      currentStatusId: bodyshopStatusIds,
+      workAssignments: {
+        some: {
+          jobCardService: {
+            serviceItem: {
+              category: {
+                slug: { in: ['body-shop', 'body_shop', 'body shop', 'bodyshop', 'paint', 'painting', 'denting', 'tinkering', 'collision'] }
+              }
+            }
+          }
+        }
+      }
+    };
+
+    const whereWaterwash = {
+      ...baseWhere,
+      currentStatusId: waterwashStatusIds,
+      services: {
+        some: {
+          serviceItem: {
+            category: {
+              slug: { in: ['water-wash', 'water_wash', 'water wash', 'waterwash', 'washing', 'wash'] }
+            }
+          }
+        }
+      }
+    };
+
+    const whereDelivery = {
+      ...baseWhere,
+      currentStatusId: deliveryStatusIds
+    };
+
+    const whereAll = {
+      ...baseWhere
+    };
+
+    allCountPromise = prisma.jobCard.count({ where: whereAll });
+    mechanicCountPromise = prisma.jobCard.count({ where: whereMechanic });
+    bodyshopCountPromise = prisma.jobCard.count({ where: whereBodyshop });
+    waterwashCountPromise = prisma.jobCard.count({ where: whereWaterwash });
+    deliveryCountPromise = prisma.jobCard.count({ where: whereDelivery });
   }
 
   const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
@@ -1120,7 +1220,15 @@ const listJobCards = async (query, user) => {
     ? { updatedAt: 'desc' }
     : { createdAt: sortOrder };
 
-  const [jobCards, total] = await Promise.all([
+  const [
+    jobCards,
+    total,
+    countAll,
+    countMechanic,
+    countBodyshop,
+    countWaterwash,
+    countDelivery
+  ] = await Promise.all([
     prisma.jobCard.findMany({
       where,
       skip,
@@ -1230,8 +1338,23 @@ const listJobCards = async (query, user) => {
         }
       }
     }),
-    prisma.jobCard.count({ where })
+    prisma.jobCard.count({ where }),
+    allCountPromise || Promise.resolve(0),
+    mechanicCountPromise || Promise.resolve(0),
+    bodyshopCountPromise || Promise.resolve(0),
+    waterwashCountPromise || Promise.resolve(0),
+    deliveryCountPromise || Promise.resolve(0)
   ]);
+
+  if (!isExport) {
+    tabCounts = {
+      all: countAll,
+      mechanic: countMechanic,
+      bodyshop: countBodyshop,
+      waterwash: countWaterwash,
+      delivery: countDelivery
+    };
+  }
   const bayIds = Array.from(new Set(
     jobCards
       .flatMap((jobCard) => jobCard.workAssignments || [])
@@ -1305,7 +1428,8 @@ const listJobCards = async (query, user) => {
       total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit)
+      totalPages: Math.ceil(total / limit),
+      ...(tabCounts ? { tabCounts } : {})
     }
   };
 };
