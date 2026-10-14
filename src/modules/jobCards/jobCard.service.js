@@ -551,6 +551,11 @@ const syncAssignmentsForServiceStatus = async (tx, service, serviceStatus, user)
           data: {
             statusId: assignmentStatus.id,
             startedAt: assignment.startedAt || now,
+            // Track employee who started/updated water wash (supervisor, manager, or MD)
+            ...(user && user.userId ? {
+              assignedUserId: user.userId,
+              assignedById: user.userId
+            } : {}),
             ...(shouldComplete ? { completedAt: assignment.completedAt || now } : {}),
             modifiedById: user && user.userId ? user.userId : null
           }
@@ -559,6 +564,9 @@ const syncAssignmentsForServiceStatus = async (tx, service, serviceStatus, user)
         assignment.statusId = assignmentStatus.id;
         assignment.status = assignmentStatus;
         assignment.startedAt = assignment.startedAt || now;
+        if (user && user.userId) {
+          assignment.assignedUserId = user.userId;
+        }
         if (shouldComplete) {
           assignment.completedAt = assignment.completedAt || now;
         }
@@ -826,7 +834,9 @@ const toAssignmentSummary = (assignment, bayMap = new Map()) => {
     id: assignment.id,
     jobCardId: assignment.jobCardId,
     jobCardServiceId: assignment.jobCardServiceId,
-    assignedUserId: isWaterWash ? null : assignment.assignedUserId,
+    // Keep assignedUserId for all services including water wash started by supervisor/manager/MD
+    // Previously: assignedUserId: isWaterWash ? null : assignment.assignedUserId,
+    assignedUserId: assignment.assignedUserId || null,
     bayId: isWaterWash ? null : (assignment.bayId || null),
     bay: isWaterWash ? null : (assignment.bayId ? toBaySummary(bayMap.get(assignment.bayId)) : null),
     assignedAt: assignment.assignedAt,
@@ -839,16 +849,16 @@ const toAssignmentSummary = (assignment, bayMap = new Map()) => {
         statusName: assignment.status.statusName
       }
       : null,
-    assignedUser: isWaterWash
-      ? null
-      : (assignment.assignedUser
-        ? {
-          id: assignment.assignedUser.id,
-          fullName: assignment.assignedUser.fullName,
-          employeeCode: assignment.assignedUser.employeeCode,
-          mobileNo: assignment.assignedUser.mobileNo
-        }
-        : null),
+    // Return assignedUser for water wash so employee details who started can be displayed
+    // Previously: assignedUser: isWaterWash ? null : (assignment.assignedUser ? ... : null),
+    assignedUser: assignment.assignedUser
+      ? {
+        id: assignment.assignedUser.id,
+        fullName: assignment.assignedUser.fullName,
+        employeeCode: assignment.assignedUser.employeeCode,
+        mobileNo: assignment.assignedUser.mobileNo
+      }
+      : null,
     service: assignment.jobCardService
       ? {
         id: assignment.jobCardService.id,
@@ -1425,8 +1435,9 @@ const getJobCardById = async (id, user) => {
       if (isWaterWash) {
         return {
           ...assignment,
-          assignedUser: null,
-          assignedUserId: null,
+          // Previously:
+          // assignedUser: null,
+          // assignedUserId: null,
           bay: null,
           bayId: null
         };

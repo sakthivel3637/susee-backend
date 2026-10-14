@@ -1359,6 +1359,11 @@ const completeWaterWashWork = async (jobCardId, user) => {
               statusId: assignmentCompletedStatusId,
               startedAt: assignment.startedAt || now,
               completedAt: assignment.completedAt || now,
+              // Record employee who completes water wash if not already tracked
+              ...(user?.userId && (!assignment.assignedUserId || assignment.assignedUserId === 1) ? {
+                assignedUserId: user.userId,
+                assignedById: user.userId
+              } : {}),
               modifiedById: user?.userId || null
             }
           });
@@ -1473,6 +1478,11 @@ const startWaterWashWork = async (jobCardId, user) => {
             data: {
               statusId: assignmentInProgressStatusId,
               startedAt: assignment.startedAt || now,
+              // Record employee who started water wash (Floor Supervisor, Manager, or MD)
+              ...(user?.userId ? {
+                assignedUserId: user.userId,
+                assignedById: user.userId
+              } : {}),
               modifiedById: user?.userId || null
             }
           });

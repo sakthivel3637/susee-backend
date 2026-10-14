@@ -2532,6 +2532,11 @@ const updateJobCardServices = async (jobCardId, servicesPayload, user) => {
           }
           if (statusObj.statusCode === 'IN_PROGRESS') {
             updateData.startedAt = assignment.startedAt || new Date();
+            // Track employee who started water wash
+            if (isWaterWash && user?.userId) {
+              updateData.assignedUserId = user.userId;
+              updateData.assignedById = user.userId;
+            }
           }
           
           await tx.workAssignment.update({
