@@ -2428,6 +2428,11 @@ const updateJobCardServices = async (jobCardId, servicesPayload, user) => {
           throw createHttpError(400, 'Completed service status cannot be changed');
         }
 
+        // Water wash service cannot be postponed as there is no subsequent service stage
+        if (statusObj.statusCode === 'POSTPONED' && getServiceDepartment(existingService) === 'water-wash') {
+          throw createHttpError(400, 'Water wash service cannot be postponed as there is no subsequent service stage');
+        }
+
         // 2. Additional work must be customer approved before it can be started / progressed
         if (existingService.isAdditional && ['ASSIGNED', 'IN_PROGRESS', 'COMPLETED'].includes(statusObj.statusCode)) {
           const approval = existingService.approvalId ? await tx.jobCardApproval.findUnique({

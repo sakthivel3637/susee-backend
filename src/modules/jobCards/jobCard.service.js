@@ -473,6 +473,13 @@ const validateServiceStatusUpdateAccess = (jobCard, service, user, targetStatusC
     String(targetStatusCode || '').endsWith('_REJECTED') ||
     String(targetStatusCode || '').endsWith('_CANCELLED');
 
+  const serviceDepartment = getServiceDepartment(service);
+
+  // Water wash service cannot be postponed as there is no subsequent service stage
+  if (targetStatusCode === 'POSTPONED' && serviceDepartment === 'water-wash') {
+    throw createHttpError(400, 'Water wash service cannot be postponed as there is no subsequent service stage');
+  }
+
   if (allowedDepartments.includes('all')) {
     if (isJobCardServiceCompleted(service)) {
       throw createHttpError(400, 'Completed service status cannot be changed');
@@ -483,8 +490,6 @@ const validateServiceStatusUpdateAccess = (jobCard, service, user, targetStatusC
     }
     return;
   }
-
-  const serviceDepartment = getServiceDepartment(service);
 
   if (!serviceDepartment || !allowedDepartments.includes(serviceDepartment)) {
     throw createHttpError(403, 'You can update only your department service status');
@@ -2333,6 +2338,12 @@ const postponeJobCardService = async (jobCardId, serviceId, reason, user) => {
     });
 
     if (!service) throw createHttpError(404, 'Service not found in Job Card');
+
+    // Water wash service cannot be postponed as there is no subsequent service stage
+    const serviceDepartment = getServiceDepartment(service);
+    if (serviceDepartment === 'water-wash') {
+      throw createHttpError(400, 'Water wash service cannot be postponed as there is no subsequent service stage');
+    }
 
     const currentJobCardStatusCode = getStatusCode(service.jobCard.currentStatus);
     if (FINAL_JOB_CARD_STATUS_CODES.includes(currentJobCardStatusCode)) {
