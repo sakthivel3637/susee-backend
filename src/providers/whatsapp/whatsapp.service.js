@@ -100,7 +100,7 @@ const buildAdditionalWorkApprovalMessage = ({ jobCard, approval, services, expla
 };
 
 const sendAdditionalWorkApproval = async ({ jobCard, approval, services, explanation, voiceNoteUrl, mediaUrl }) => {
-  const targetMobile = '6383853095'; // Direct test number
+  const recipientMobile = jobCard.customer?.mobileNo || '9952656498';
   const resolvedVoiceNoteUrl = voiceNoteUrl || (Array.isArray(mediaUrl) ? mediaUrl[0] : mediaUrl) || null;
   const customerName = jobCard.customer?.fullName || 'Customer';
   const vehicleNo = jobCard.vehicle?.registrationNo || 'your vehicle';
@@ -129,8 +129,7 @@ const sendAdditionalWorkApproval = async ({ jobCard, approval, services, explana
       '7': explanation || ''
     });
     messagePayload = {
-      //  to: jobCard.customer?.mobileNo,
-      to: targetMobile,
+      to: recipientMobile,
       body: buildAdditionalWorkApprovalMessage({ jobCard, approval, services, explanation }),
       contentSid,
       contentVariables
@@ -138,8 +137,7 @@ const sendAdditionalWorkApproval = async ({ jobCard, approval, services, explana
   } else {
     // Fallback: plain text message with reply instructions
     messagePayload = {
-      //  to: jobCard.customer?.mobileNo,
-      to: targetMobile,
+      to: recipientMobile,
       body: buildAdditionalWorkApprovalMessage({ jobCard, approval, services, explanation })
     };
   }
@@ -150,8 +148,7 @@ const sendAdditionalWorkApproval = async ({ jobCard, approval, services, explana
   if (resolvedVoiceNoteUrl && typeof resolvedVoiceNoteUrl === 'string' && resolvedVoiceNoteUrl.startsWith('https://')) {
     try {
       await sendWhatsAppMessage({
-        //  to: jobCard.customer?.mobileNo,
-        to: targetMobile,
+        to: recipientMobile,
         body: 'Mechanic voice note:',
         mediaUrl: [resolvedVoiceNoteUrl]
       });

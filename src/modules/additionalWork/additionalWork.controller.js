@@ -52,6 +52,11 @@ const twilioWebhook = async (req, res, next) => {
   try {
     const data = await service.handleTwilioWebhook(req);
 
+    if (data.replyText) {
+      res.type('text/xml');
+      return res.status(200).send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${data.replyText}</Message></Response>`);
+    }
+
     return apiResponse(res, {
       statusCode: 200,
       success: true,
@@ -59,7 +64,9 @@ const twilioWebhook = async (req, res, next) => {
       data
     });
   } catch (error) {
-    return next(error);
+    console.error('[Twilio Webhook Error]:', error?.message || error);
+    res.type('text/xml');
+    return res.status(200).send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
   }
 };
 

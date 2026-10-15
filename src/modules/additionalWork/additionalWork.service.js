@@ -937,7 +937,7 @@ const createRequest = async (jobCardIdentifier, payload, user) => {
   try {
     // const customerMobile = result.jobCard.customer?.mobileNo || result.jobCard.customer?.mobile || '';
 
-    const customerMobile = '8825971339'; // Direct test number
+    const customerMobile = '9952656498'; // Direct test number (joined sandbox)
     const jobCardForMsg = {
       ...result.jobCard,
       customer: {
@@ -982,19 +982,14 @@ const parseApprovalReply = (reqOrBody) => {
   const isApproved = /\b(YES|Y|OK|1|CONFIRM|PROCEED|AGREE)\b/i.test(rawText) || /APPROV/i.test(rawText);
   const isRejected = /\b(NO|N|CANCEL|2|STOP|DECLINE|DISAGREE)\b/i.test(rawText) || /REJECT/i.test(rawText);
 
-  if (!isApproved && !isRejected) {
-    console.warn('Twilio approval parsing failed. Received payload:', JSON.stringify(bodyObj));
-    throw createHttpError(400, 'Could not parse approval response');
-  }
-
-  const decision = isApproved ? 'APPROVED' : 'REJECTED';
+  const decision = isApproved ? 'APPROVED' : (isRejected ? 'REJECTED' : null);
   const codeMatch = rawText.match(/\b([A-Z]{2}\d{6})\b/i);
   const approvalCode = codeMatch ? codeMatch[1].toUpperCase() : null;
 
   return {
     decision,
     approvalCode,
-    responseText: rawText || decision
+    responseText: rawText || decision || ''
   };
 };
 
@@ -1014,6 +1009,59 @@ const handleTwilioWebhook = async (req) => {
   // }
 
   const { decision, approvalCode, responseText } = parseApprovalReply(req);
+
+  // If customer sent a message that is not YES/NO (e.g. "Hello", "Hi", etc.)
+  if (!decision) {
+    const fromNumber = String(req.body?.From || '').replace(/\D/g, '');
+    const mobileDigits = fromNumber.length >= 10 ? fromNumber.slice(-10) : null;
+
+    let pendingApproval = null;
+    if (mobileDigits) {
+      pendingApproval = await prisma.jobCardApproval.findFirst({
+        where: {
+          approvalType: APPROVAL_TYPE_ADDITIONAL_WORK,
+          status: { statusCode: 'PENDING' },
+          jobCard: {
+            customer: {
+              OR: [
+                { mobileNo: { contains: mobileDigits } },
+                { alternateMobileNo: { contains: mobileDigits } }
+              ]
+            }
+          }
+        },
+        orderBy: { createdAt: 'desc' },
+        include: { jobCard: true }
+      });
+    }
+
+    if (!pendingApproval) {
+      pendingApproval = await prisma.jobCardApproval.findFirst({
+        where: {
+          approvalType: APPROVAL_TYPE_ADDITIONAL_WORK,
+          status: { statusCode: 'PENDING' }
+        },
+        orderBy: { createdAt: 'desc' },
+        include: { jobCard: true }
+      });
+    }
+
+    if (pendingApproval) {
+      const jobCardNo = pendingApproval.jobCard?.jobCardNo || '';
+      const code = pendingApproval.approvalCode || '';
+      return {
+        alreadyResponded: false,
+        unrecognized: true,
+        replyText: `Hello! We received your message. To approve the additional work estimate for Job Card #${jobCardNo}, please reply with *YES* (or *YES ${code}*). To reject, reply with *NO* (or *NO ${code}*).`
+      };
+    }
+
+    return {
+      alreadyResponded: false,
+      unrecognized: true,
+      replyText: `Hello! Thank you for contacting Susee Motors. We received your message. If you are replying to an additional work estimate, please reply *YES* to approve or *NO* to reject.`
+    };
+  }
 
   return prisma.$transaction(async (tx) => {
     let approval = null;
@@ -1099,13 +1147,18 @@ const handleTwilioWebhook = async (req) => {
     }
 
     if (!approval) {
-      throw createHttpError(404, 'Approval request not found');
+      return {
+        alreadyResponded: false,
+        notFound: true,
+        replyText: 'No pending additional work approval was found matching your request. Please contact your service advisor.'
+      };
     }
 
     if (approval.respondedAt) {
       return {
         approval: toApprovalResource(approval),
-        alreadyResponded: true
+        alreadyResponded: true,
+        replyText: `Your response for Job Card #${approval.jobCard?.jobCardNo || ''} has already been recorded.`
       };
     }
 
@@ -1223,9 +1276,11 @@ const handleTwilioWebhook = async (req) => {
       }
     });
 
+    const actionText = decision === 'APPROVED' ? 'approved' : 'declined';
     return {
       approval: toApprovalResource(updatedApproval),
-      alreadyResponded: false
+      alreadyResponded: false,
+      replyText: `Thank you! Your response has been recorded. Additional work for Job Card #${approval.jobCard?.jobCardNo || ''} has been ${actionText}.`
     };
   }, { maxWait: 20000, timeout: 50000 });
 };
