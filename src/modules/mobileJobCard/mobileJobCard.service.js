@@ -815,7 +815,7 @@ const toJobCardListResponse = (jobCard) => {
   const allAssignments = (jobCard.workAssignments || []).map(toAssignmentSummary);
   const activeAssignments = allAssignments.filter((assignment) => !assignment.completedAt);
   const displayAssignments = allAssignments;
-  
+
   const assignedMechanics = Array.from(
     new Map(
       displayAssignments
@@ -824,7 +824,7 @@ const toJobCardListResponse = (jobCard) => {
     ).values()
   );
   const assignedMechanic = assignedMechanics[0] || null;
-  
+
   const assignedBays = Array.from(
     new Map(
       displayAssignments
@@ -2167,6 +2167,17 @@ const createFromGateEntry = async (payload, user, files = []) => {
       ]
     });
 
+    const mediaRows = buildMediaRows({
+      uploadedPhotos,
+      vehicleId: gateEntry.vehicleId
+    });
+
+    if (mediaRows.length > 0) {
+      await tx.mediaFile.createMany({
+        data: mediaRows
+      });
+    }
+
     const createdJobCard = await tx.jobCard.findUnique({
       where: {
         id: jobCard.id
@@ -2414,7 +2425,7 @@ const updateJobCardServices = async (jobCardId, servicesPayload, user) => {
     for (const payloadService of (servicesPayload || [])) {
       const serviceId = Number(payloadService.id);
       const newStatusString = (payloadService.status || '').toUpperCase().replace(/\s+/g, '_');
-      
+
       const statusObj = statuses.find(s => s.statusCode === newStatusString || s.statusName.toUpperCase().replace(/\s+/g, '_') === newStatusString);
       if (!statusObj) throw createHttpError(400, `Invalid status: ${payloadService.status}`);
 
@@ -2514,16 +2525,16 @@ const updateJobCardServices = async (jobCardId, servicesPayload, user) => {
         const isWaterWash = isWaterWashService || existingAssignmentStatus?.statusCode?.includes('WATER_WASH');
         const isBodyShop = !isWaterWash && (existingAssignmentStatus?.statusCode?.includes('BODY_SHOP') || false);
         const prefix = isWaterWash ? 'WATER_WASH_' : (isBodyShop ? 'BODY_SHOP_' : 'MECHANICAL_');
-        
+
         let baseStatusCode = statusObj.statusCode;
         const normalizedName = (statusObj.statusName || '').toUpperCase().replace(/\s+/g, '_');
         if (normalizedName === 'IN_PROGRESS' || baseStatusCode === 'IN_PROGRESS') baseStatusCode = 'IN_PROGRESS';
         if (normalizedName === 'COMPLETED' || baseStatusCode === 'COMPLETED') baseStatusCode = 'COMPLETED';
         if (normalizedName === 'ASSIGNED' || baseStatusCode === 'ASSIGNED') baseStatusCode = 'ASSIGNED';
-        
+
         const matchAssignStatus = assignmentStatuses.find(s => s.statusCode === `${prefix}${baseStatusCode}` || s.statusName.toUpperCase().replace(/\s+/g, '_') === `${prefix}${baseStatusCode}`)
           || (isWaterWash ? assignmentStatuses.find(s => s.statusCode === baseStatusCode) : null);
-        
+
         if (matchAssignStatus && assignment.statusId !== matchAssignStatus.id) {
           let updateData = { statusId: matchAssignStatus.id, modifiedById: user?.userId || null };
           if (statusObj.statusCode === 'COMPLETED') {
@@ -2538,7 +2549,7 @@ const updateJobCardServices = async (jobCardId, servicesPayload, user) => {
               updateData.assignedById = user.userId;
             }
           }
-          
+
           await tx.workAssignment.update({
             where: { id: assignment.id },
             data: updateData
